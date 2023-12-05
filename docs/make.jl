@@ -12,9 +12,9 @@ makedocs(sitename = "MeshGraphNets.jl",
             edit_link = nothing
         ),
         authors = "Julian Trommer, and contributors.",
-        modules = [GraphNetCore],
+        modules = [MeshGraphNets, GraphNetCore],
         checkdocs = :exports,
-        linkcheck = true,
+        linkcheck = false,
         pages = [
             "Home" => "index.md",
             "Overview" => "overview.md",

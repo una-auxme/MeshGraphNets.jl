@@ -19,7 +19,7 @@ You can keep the `.tfrecord` files as is. You only need to change the `meta.json
 
 > If you want to understand the structure of the `meta.json` file take a look at the section [Training Data](https://una-auxme.github.io/MeshGraphNets.jl/dev/training_data).
 
-The default path for the data folder that is specified in the [example script]((https://github.com/una-auxme/MeshGraphNets.jl/tree/main/examples/cylinder_flow/cylinder_flow.jl)) is:
+The default path for the data folder that is specified in the [example script](https://github.com/una-auxme/MeshGraphNets.jl/blob/main/examples/cylinder_flow/cylinder_flow.jl) is:
 
     `{path_to_cylinder_flow.jl}/data/datasets/`
 

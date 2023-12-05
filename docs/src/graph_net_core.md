@@ -32,5 +32,4 @@ parse_edges
 one_hot
 minmaxnorm
 mse_reduce
-inverse_data
 ```

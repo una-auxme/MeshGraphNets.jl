@@ -118,7 +118,7 @@ The structure for the HDF5 key has to follow one rule:
 
 ### CylinderFlow metadata
 
-The [metadata file](https://github.com/una-auxme/MeshGraphNets.jl/tree/main/examples/cylinder_flow/meta.json) (taken from the from [CylinderFlow](https://una-auxme.github.io/MeshGraphNets.jl/dev/cylinder_flow) example) has the following structure:
+The [metadata file](https://github.com/una-auxme/MeshGraphNets.jl/blob/main/examples/cylinder_flow/meta.json) (taken from the from [CylinderFlow](https://una-auxme.github.io/MeshGraphNets.jl/dev/cylinder_flow) example) has the following structure:
 
 ```json
 {
