@@ -273,7 +273,7 @@ Useful for initial training of the system since it it faster than training with 
 
 # Keyword Arguments
 - `window_size`: Number of steps from each trajectory (starting at the beginning) that are used for training. If the number is zero then the whole trajectory is used.
-- `eigeninformed`: Whether eigeninformed training is used at each training step or not. See [utils.jl](@ref) for reference.
+- `eigeninformed`: Whether eigeninformed training is used at each training step or not. See [utils.jl](https://github.com/una-auxme/MeshGraphNets.jl/blob/main/src/utils.jl) for reference.
 - `plot_progress`: Whether the training progress is plotted or not.
 
 """
@@ -294,7 +294,7 @@ Similar to Collocation, but timesteps are sampled randomly from the trajectory i
 
 # Keyword Arguments
 - `window_size`: Number of steps from each trajectory (starting at the beginning) that are used for training. If the number is zero then the whole trajectory is used.
-- `eigeninformed`: Whether eigeninformed training is used at each training step or not. See [utils.jl](@ref) for reference.
+- `eigeninformed`: Whether eigeninformed training is used at each training step or not. See [utils.jl](https://github.com/una-auxme/MeshGraphNets.jl/blob/main/src/utils.jl) for reference.
 - `plot_progress`: Whether the training progress is plotted or not.
 
 """

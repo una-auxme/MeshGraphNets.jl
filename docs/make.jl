@@ -32,4 +32,14 @@ makedocs(sitename = "MeshGraphNets.jl",
         ]
 )
 
-deploydocs(repo = "github.com/una-auxme/MeshGraphNets.jl.git", devbranch = "main")
+function deployConfig()
+    github_repository = get(ENV, "GITHUB_REPOSITORY", "")
+    github_event_name = get(ENV, "GITHUB_EVENT_NAME", "")
+    if github_event_name == "workflow_run"
+        github_event_name = "push"
+    end
+    github_ref = get(ENV, "GITHUB_REF", "")
+    return GitHubActions(github_repository, github_event_name, github_ref)
+end
+
+deploydocs(repo = "github.com/una-auxme/MeshGraphNets.jl.git", devbranch = "main", deploy_config = deployConfig())

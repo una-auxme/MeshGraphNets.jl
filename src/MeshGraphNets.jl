@@ -86,7 +86,7 @@ Starts the training process with the given configuration.
 - `SingleShooting`
 - `MultipleShooting`
 
-See [strategies.jl](@ref) for reference.
+See [documentation](https://una-auxme.github.io/MeshGraphNets.jl/dev/cylinder_flow) for reference.
 
 # Returns
 - `mgn`: The trained network as a [`GraphNetwork`](@ref) struct.
