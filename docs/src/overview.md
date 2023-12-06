@@ -1,8 +1,8 @@
 # Overview
 
-This page provides links for the different sections depending on your use case. You can start with one of the examples if you want to try out the package or create your own network of MeshGraphNets for your use case.
+This page provides links for the different sections of this documentation. You can start with one of the examples if you want to try out the package or create your own network via [*MeshGraphNets.jl*](https://github.com/una-auxme/MeshGraphNets.jl) for your use case.
 
-References for training strategies and the core package [GraphNetCore.jl](https://github.com/una-auxme/GraphNetCore.jl) are also listed.
+References for training strategies and the core package [*GraphNetCore.jl*](https://github.com/una-auxme/GraphNetCore.jl) are also listed.
 
 **Getting Started**
 

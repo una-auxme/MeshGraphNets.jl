@@ -14,11 +14,13 @@ You can find the original implementation of MeshGraphNets in their GitHub reposi
 
 [*MeshGraphNets.jl*](https://github.com/una-auxme/MeshGraphNets.jl) is designed to be part of the [SciML](https://sciml.ai/) ecosystem. The original framework was remodeled into a NeuralODE so that solvers from the [DifferentialEquations.jl](https://docs.sciml.ai/DiffEqDocs/stable/) can be used to evaluate the system.
 
+Base functionality for the `Encode-Process-Decode` architecture of `DeepMind` that *MeshGraphNets* is based on is provided in the core package [*GraphNetCore.jl*](https://github.com/una-auxme/GraphNetCore.jl).
+
 ## How to use MeshGraphNets.jl
 
 Examples from the original paper are implemented in the [examples folder](https://github.com/una-auxme/MeshGraphNets.jl/tree/main/examples). You can also refer to the [documentation](https://una-auxme.github.io/MeshGraphNets.jl/dev/overview) if you want to model your own system.
 
-## Currently supported
+## Currently Supported
 
 - Customizable input & output quantities
 - 1D & 3D meshes

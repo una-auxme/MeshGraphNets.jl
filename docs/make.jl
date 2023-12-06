@@ -6,6 +6,8 @@
 import Pkg; Pkg.develop(path = joinpath(@__DIR__, "../../MeshGraphNets.jl"))
 using Documenter, MeshGraphNets, GraphNetCore
 
+import Documenter: GitHubActions
+
 makedocs(sitename = "MeshGraphNets.jl",
         format = Documenter.HTML(
             sidebar_sitename = false,
