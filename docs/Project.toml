@@ -1,6 +1,7 @@
 [deps]
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 GraphNetCore = "7809f980-de1b-4f9a-8451-85f041491431"
+MeshGraphNets = "f7b4726d-4195-44ab-b39c-37bbdadae004"
 
 [compat]
 julia = "1.9"
