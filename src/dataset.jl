@@ -189,23 +189,45 @@ function read_h5!(filename, data_keys, meta, is_jld)
                 end
 
                 for (m, data) in match_data
-                    idx = Base.parse.(Int, split(split(m, r"(\[|\])")[2], ","))
-                    if haskey(meta["features"][fn], "split") && meta["features"][fn]["split"]
-                        coord = Base.parse.(Int, split(split(m, r"(\[|\])")[4], ","))
-                    else
-                        coord = Colon()
-                    end
-
-                    fn_k = occursin(".ev", m) ? "$fn.ev" : fn
-
-                    if meta["features"][fn]["type"] == "dynamic"
-                        if ndims(data) == 2
-                            traj_dict[fn_k][coord, dims_to_li(dims, idx), :] = data[coord, 1:trajectory_length]
+                    if !occursin("]", m[1:end-1])
+                        idx = Colon()
+                        if haskey(meta["features"][fn], "split") && meta["features"][fn]["split"]
+                            coord = Base.parse.(Int, split(split(m, r"(\[|\])")[2], ","))
                         else
-                            traj_dict[fn_k][coord, dims_to_li(dims, idx), :] = data[1:trajectory_length]
+                            coord = Colon()
                         end
+
+                        fn_k = occursin(".ev", m) ? "$fn.ev" : fn
+
+                        if meta["features"][fn]["type"] == "dynamic"
+                            if ndims(data) == 2
+                                traj_dict[fn_k][coord, :, :] = data[coord, 1:trajectory_length]
+                            else
+                                traj_dict[fn_k][coord, :, :] = data[1:trajectory_length]
+                            end
+                        else
+                            traj_dict[fn_k][coord, :, :] .= data
+                        end
+
                     else
-                        traj_dict[fn_k][coord, dims_to_li(dims, idx), :] .= data
+                        idx = Base.parse.(Int, split(split(m, r"(\[|\])")[2], ","))
+                        if haskey(meta["features"][fn], "split") && meta["features"][fn]["split"]
+                            coord = Base.parse.(Int, split(split(m, r"(\[|\])")[4], ","))
+                        else
+                            coord = Colon()
+                        end
+
+                        fn_k = occursin(".ev", m) ? "$fn.ev" : fn
+
+                        if meta["features"][fn]["type"] == "dynamic"
+                            if ndims(data) == 2
+                                traj_dict[fn_k][coord, dims_to_li(dims, idx), :] = data[coord, 1:trajectory_length]
+                            else
+                                traj_dict[fn_k][coord, dims_to_li(dims, idx), :] = data[1:trajectory_length]
+                            end
+                        else
+                            traj_dict[fn_k][coord, dims_to_li(dims, idx), :] .= data
+                        end
                     end
                 end
             end
