@@ -1,7 +1,7 @@
 name = "MeshGraphNets"
 uuid = "f7b4726d-4195-44ab-b39c-37bbdadae004"
 authors = ["JT <julian.trommer@uni-a.de>"]
-version = "0.1.1"
+version = "0.2.0"
 
 [deps]
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
@@ -34,7 +34,7 @@ ChainRulesCore = "1.16.0 - 1.18"
 DataFrames = "1.6"
 DifferentialEquations = "7.11"
 Distributions = "0.25"
-GraphNetCore = "0.1"
+GraphNetCore = "0.2"
 HDF5 = "0.17"
 JLD2 = "0.4"
 JSON = "0.21"
