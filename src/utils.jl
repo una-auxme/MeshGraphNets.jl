@@ -5,6 +5,72 @@
 
 import Printf: @sprintf
 
+function der_minmax(path)
+    result = der_minmax(path, true)
+    result_test = der_minmax(path, false)
+
+    for (k, v) in result_test
+        if v[1] < result[k][1]
+            result[k][1] = v[1]
+        end
+        if v[2] > result[k][2]
+            result[k][2] = v[2]
+        end
+    end
+    return result
+end
+
+function der_minmax(path, is_training)
+    dataset = load_dataset(path, is_training)
+
+    target_features = dataset.meta["target_features"]
+
+    result = Dict(tf => [Inf32, -Inf32] for tf in target_features)
+
+    n_traj = dataset.meta["n_trajectories"]
+    
+    for _ in 1:n_traj
+        data, meta = next_trajectory!(dataset, cpu_device(); types_noisy = [], noise_stddevs = [], ts = nothing)
+        dt =  Float32(meta["dt"][2] -  meta["dt"][1])
+        for tf in target_features
+            for i in 2:size(data[tf], 3)
+                ddiff = (data[tf][:, :, i] - data[tf][:, :, i - 1]) ./ dt
+                ddiff_min = minimum(ddiff)
+                ddiff_max = maximum(ddiff)
+                if ddiff_min < result[tf][1]
+                    result[tf][1] = ddiff_min
+                end
+                if ddiff_max > result[tf][2]
+                    result[tf][2] = ddiff_max
+                end
+            end
+        end
+    end
+
+    if is_training
+        n_traj_valid = dataset.meta["n_trajectories_valid"]
+        for _ in 1:n_traj_valid
+            data, meta = next_trajectory!(dataset, cpu_device(); types_noisy = [], noise_stddevs = [], ts = nothing, is_training = false)
+            dt =  Float32(meta["dt"][2] -  meta["dt"][1])
+            for tf in target_features
+                for i in 2:size(data[tf], 3)
+                    ddiff = (data[tf][:, :, i] - data[tf][:, :, i - 1]) ./ dt
+                    ddiff_min = minimum(ddiff)
+                    ddiff_max = maximum(ddiff)
+                    if ddiff_min < result[tf][1]
+                        result[tf][1] = ddiff_min
+                    end
+                    if ddiff_max > result[tf][2]
+                        result[tf][2] = ddiff_max
+                    end
+                end
+            end
+        end
+    end
+
+    return result
+end
+
 """
     li_to_ci(dims, li)
 

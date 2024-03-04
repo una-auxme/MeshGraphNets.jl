@@ -18,7 +18,7 @@ end
 
 function validation_step(::TrainingStrategy, t::Tuple, sim_interval, data_interval)
 
-    mgn, data, meta, delta, solver, solver_dt, fields, node_type, edge_features, senders, receivers, val_mask, opt_state, step, avg_loss, cp_path, tmp_loss, rollout = t
+    mgn, data, meta, delta, solver, solver_dt, fields, node_type, edge_features, senders, receivers, mask, val_mask, inflow_mask, data, opt_state, step, avg_loss, cp_path, tmp_loss, rollout = t
 
     initial_state = Dict(
         [typeof(v) <: AbstractArray ? (k, v[:, :, 1]) : (k, v) for (k,v) in data]
@@ -31,12 +31,12 @@ function validation_step(::TrainingStrategy, t::Tuple, sim_interval, data_interv
 
     gt = vcat([data[tf] for tf in meta["target_features"]]...)[:, :, data_interval]
 
-    solution = rollout(solver, mgn, initial_state, fields, meta["target_features"], target_dict, node_type, edge_features, senders, receivers, val_mask, sim_interval[1], sim_interval[end], solver_dt, sim_interval; show_progress = false)
-    prediction = cat(solution.u..., dims = 3)[:, :, data_interval]
+    sol_u, _ = rollout(solver, mgn, initial_state, fields, meta, meta["target_features"], target_dict, node_type, edge_features, senders, receivers, val_mask, inflow_mask, data, sim_interval[1], sim_interval[end], solver_dt, sim_interval; show_progress = false)
+    prediction = cat(sol_u..., dims = 3)[:, :, data_interval]
 
-    error = mean((prediction - gt) .^ 2; dims = 2)
+    error = mean((prediction - gt) .^ 2; dims = 3)
 
-    return sqrt(mean(error[:, 1, :])), gt, prediction
+    return mean(error[mask]), gt, prediction
 end
 
 abstract type SolverStrategy <: TrainingStrategy end
@@ -48,7 +48,6 @@ end
 function init_train_step(::SolverStrategy, t::Tuple, ta::Tuple)
 
     mgn, data, meta, fields, target_fields, node_type, edge_features, senders, receivers, _, _, val_mask = t
-    cb_solve = ta
 
     target_dict = Dict{String, Int32}()
     for tf in meta["target_features"]
@@ -72,29 +71,31 @@ function init_train_step(::SolverStrategy, t::Tuple, ta::Tuple)
     gt = vcat([data[tf] for tf in meta["target_features"]]...)
     u0 = gt[:, :, 1]
 
-    return (mgn, inputs, fields, target_fields, target_dict, node_type, edge_features, senders, receivers, val_mask, u0, gt, cb_solve)
+    return (mgn, data, inputs, fields, meta, target_fields, target_dict, node_type, edge_features, senders, receivers, val_mask, u0, gt)
 end
 
 function train_step(strategy::SolverStrategy, t::Tuple)
 
-    mgn, inputs, fields, target_fields, target_dict, node_type, edge_features, senders, receivers, val_mask, u0, gt, cb_solve, opt = t
+    mgn, data, inputs, fields, meta, target_fields, target_dict, node_type, edge_features, senders, receivers, val_mask, u0, gt, opt = t
+
+    inflow_mask = repeat(data["node_type"][:, :, 1] .== 1, sum(size(data[field], 1) for field in meta["target_features"]), 1) |> cpu_device()
 
     pr = ProgressUnknown(showspeed = true)
 
-    ff = ODEFunction((x, p, t) -> fast_step(x, (mgn, p, inputs, fields, target_fields, target_dict, node_type, edge_features, senders, receivers, val_mask, pr), t))
+    ff = ODEFunction{false}((x, p, t) -> fast_step_solve(x, (mgn, p, data, inputs, fields, meta, target_fields, target_dict, node_type, edge_features, senders, receivers, val_mask, inflow_mask, strategy, pr), t))
     prob = ODEProblem(ff, u0, (strategy.tstart, strategy.tstop), mgn.ps)
 
     if !isnothing(opt)
         adtype = AutoZygote()
-        optf = OptimizationFunction((x, p) -> train_loss(strategy, (prob, ps, u0, cb_solve, gt)), adtype)
+        optf = OptimizationFunction((x, p) -> train_loss(strategy, (prob, ps, u0, nothing, gt, val_mask)), adtype)
         opt_prob = OptimizationProblem(optf, mgn.ps)
         result = solve(opt_prob, opt; maxiters = 300)
 
         return result
     else
-        shoot_loss, back = Zygote.pullback(ps -> train_loss(strategy, (prob, ps, u0, cb_solve, gt)), mgn.ps)
+        shoot_loss, back = Zygote.pullback(ps -> train_loss(strategy, (prob, ps, u0, nothing, gt, val_mask)), mgn.ps)
 
-        shoot_gs = back(one(shoot_loss))[1]
+        shoot_gs = back(one(shoot_loss))
 
         return shoot_gs, shoot_loss
     end
@@ -138,20 +139,29 @@ struct SingleShooting <: SolverStrategy
     solargs
 end
 
-function SingleShooting(tstart::Float32, dt::Float32, tstop::Float32, solver::OrdinaryDiffEqAlgorithm; sense::AbstractSensitivityAlgorithm = InterpolatingAdjoint(autojacvec = ZygoteVJP()), plot_progress = false, solargs...)
+function SingleShooting(tstart::Float32, dt::Float32, tstop::Float32, solver::OrdinaryDiffEqAlgorithm; sense::AbstractSensitivityAlgorithm = InterpolatingAdjoint(autojacvec = ZygoteVJP(), checkpointing = true), plot_progress = false, solargs...)
     SingleShooting(tstart, dt, tstop, solver, sense, plot_progress, solargs)
 end
 
 function train_loss(strategy::SingleShooting, t::Tuple)
 
-    prob, ps, u0, callback_solve, gt = t
+    prob, ps, u0, callback_solve, gt, val_mask = t
 
-    sol = solve(remake(prob; p = ps), strategy.solver; u0 = u0, saveat = strategy.tstart:strategy.dt:strategy.tstop, sensealg = strategy.sense, strategy.solargs...)
+    sol = solve(remake(prob; p = ps), strategy.solver; u0 = u0, saveat = strategy.tstart:strategy.dt:strategy.tstop, tstops = strategy.tstart:strategy.dt:strategy.tstop, sensealg = strategy.sense, callback = callback_solve, strategy.solargs...)
 
     pred = typeof(gt) <: CuArray ? CuArray(sol) : Array(sol)
 
-    error = (gt[:, :, 1:size(pred, 3)] .- pred) .^ 2
-    loss = mean(error)
+    error = (gt[:, :, 1:size(pred, 3)] .- pred) .^ 2 |> cpu_device()
+
+    err_buf = Zygote.Buffer(error)
+
+    vm = cpu_device()(val_mask)
+
+    err_buf[:, :, :] = error
+    for i in axes(err_buf, 3)
+        err_buf[:, :, i] = err_buf[:, :, i] .* vm
+    end
+    loss = mean(copy(err_buf))
 
     return loss
 end
@@ -171,15 +181,15 @@ struct MultipleShooting <: SolverStrategy
     solargs
 end
 
-function MultipleShooting(tstart::Float32, dt::Float32, tstop::Float32, solver::OrdinaryDiffEqAlgorithm, interval_size, continuity_term = 100; sense::AbstractSensitivityAlgorithm = InterpolatingAdjoint(autojacvec = ZygoteVJP()), plot_progress = false, solargs...)
+function MultipleShooting(tstart::Float32, dt::Float32, tstop::Float32, solver::OrdinaryDiffEqAlgorithm, interval_size, continuity_term = 100; sense::AbstractSensitivityAlgorithm = InterpolatingAdjoint(autojacvec = ZygoteVJP(), checkpointing = true), plot_progress = false, solargs...)
     MultipleShooting(tstart, dt, tstop, solver, sense, interval_size, continuity_term, plot_progress, solargs)
 end
 
 function train_loss(strategy::MultipleShooting, t::Tuple)
-    prob, ps, _, callback_solve, gt = t
+    prob, ps, _, callback_solve, gt, val_mask = t
 
     tsteps = strategy.tstart:strategy.dt:strategy.tstop
-    ranges = [i:min(size(gt, 3), i + strategy.interval_size - 1) for i in 1:strategy.interval_size-1:size(gt, 3)-1]
+    ranges = [i:min(length(tsteps), i + strategy.interval_size - 1) for i in 1:strategy.interval_size-1:length(tsteps)-1]
 
     sols = [
         solve(
@@ -196,23 +206,28 @@ function train_loss(strategy::MultipleShooting, t::Tuple)
             strategy.solargs...
         ) for rg in ranges
     ]
-    group_predictions = Array.(sols)
+    group_predictions = typeof(gt) <: CuArray ? CuArray.(sols) : Array.(sols)
 
     retcodes = [sol.retcode for sol in sols]
     if any(retcodes .!= :Success)
         return Inf
     end
 
+    vm = cpu_device()(val_mask)
+
     loss = 0
     for (i, rg) in enumerate(ranges)
-        u = cpu_device()(gt[:, :, rg])
-        û = group_predictions[i]
-        
-        error = (u - û) .^ 2
-        loss += mean(error)
+        error = (gt[:, :, rg] - group_predictions[i]) .^ 2 |> cpu_device()
+
+        err_buf = Zygote.Buffer(error)
+        err_buf[:, :, :] = error
+        for i in axes(err_buf, 3)
+            err_buf[:, :, i] = err_buf[:, :, i] .* vm
+        end
+        loss += mean(copy(err_buf))
         
         if i > 1
-            loss += strategy.continuity_term * sum(abs, group_predictions[i - 1][:, :, end] - u[:, :, 1])
+            loss += strategy.continuity_term * sum(abs, group_predictions[i - 1][:, :, end] - gt[:, :, first(rg)])
         end
     end
 
@@ -235,14 +250,12 @@ function init_train_step(strategy::CollocationStrategy, t::Tuple, ::Tuple)
         ;
     end
 
-    cur_quantities = vcat([data[field][:, :, datapoint] for field in target_fields]...)
-    target_quantities = vcat([data["target|" * field][:, :, datapoint] for field in target_fields]...)
     if typeof(meta["dt"]) <: AbstractArray
-        target_quantities_change = mgn.o_norm((target_quantities - cur_quantities) / (meta["dt"][datapoint + 1] - meta["dt"][datapoint]))
+        target_quantities_change = vcat([mgn.o_norm[field]((data["target|" * field][:, :, datapoint] - data[field][:, :, datapoint]) / (meta["dt"][datapoint + 1] - meta["dt"][datapoint])) for field in target_fields]...)
     else
-        target_quantities_change = mgn.o_norm((target_quantities - cur_quantities) / Float32(meta["dt"]))
+        target_quantities_change = vcat([mgn.o_norm[field]((data["target|" * field][:, :, datapoint] - data[field][:, :, datapoint]) / Float32(meta["dt"])) for field in target_fields]...)
     end
-    graph = build_graph(mgn, data, fields, datapoint, node_type, edge_features, senders, receivers, true)
+    graph = build_graph(mgn, data, fields, datapoint, node_type, edge_features, senders, receivers)
 
     return (mgn, graph, target_quantities_change, mask)
 end
@@ -331,7 +344,7 @@ function init_train_step(::RandomCollocation, t::Tuple, ta::Tuple)
     else
         target_quantities_change = mgn.o_norm((target_quantities - cur_quantities) / Float32(meta["dt"]))
     end
-    graph = build_graph(mgn, data, fields, sample, node_type, edge_features, senders, receivers, true)
+    graph = build_graph(mgn, data, fields, sample, node_type, edge_features, senders, receivers)
 
     return (mgn, graph, target_quantities_change, mask)
 end
