@@ -10,6 +10,7 @@ using GraphNetCore
 using CUDA
 using Lux, LuxCUDA
 using Optimisers
+using Wandb
 using Zygote
 
 import DifferentialEquations: ODEProblem, OrdinaryDiffEqAlgorithm, Tsit5
@@ -48,6 +49,7 @@ export train_network, eval_network, der_minmax
     num_rollouts::Integer = 10
     solver_valid::OrdinaryDiffEqAlgorithm = Tsit5()
     solver_valid_dt::Union{Nothing, Float32} = nothing
+    wandb_logger::Union{Nothing, Wandb.WandbLogger} = nothing
 end
 
 """
@@ -214,7 +216,13 @@ function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise, df_tr
     min_validation_loss = length(df_valid.loss) > 0 ? last(df_valid.loss) : Inf32
     last_validation_loss = min_validation_loss
 
-    pr = Progress(args.epochs*args.steps; desc = "Training progress: ", dt=1.0, barlen=50, start=checkpoint, showspeed=true)
+    if isnothing(args.wandb_logger)
+        pr = Progress(args.epochs*args.steps; desc = "Training progress: ", dt=1.0, barlen=50, start=checkpoint, showspeed=true)
+        clear_log(1)
+        update!(pr)
+    else
+        pr = nothing
+    end
 
     local tmp_loss = 0.0f0
     local avg_loss = 0.0f0
@@ -248,9 +256,15 @@ function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise, df_tr
                         opt_state, ps = Optimisers.update(opt_state, mgn.ps, gs[i])
                         mgn.ps = ps
                     end
-                    next!(pr, showvalues=[(:train_step,"$(step + datapoint)/$(args.epochs*args.steps)"), (:train_loss, sum(losses)), (:checkpoint, length(df_train.step) > 0 ? last(df_train.step) : 0), (:data_interval, delta == 1 ? "1:end" : 1:delta), (:min_validation_loss, min_validation_loss)])
+                    if isnothing(args.wandb_logger)
+                        next!(pr, showvalues=[(:train_step,"$(step + datapoint)/$(args.epochs*args.steps)"), (:train_loss, sum(losses)), (:checkpoint, length(df_train.step) > 0 ? last(df_train.step) : 0), (:data_interval, delta == 1 ? "1:end" : 1:delta), (:min_validation_loss, min_validation_loss), (:last_validation_loss, last_validation_loss)])
+                    else
+                        Wandb.log(args.wandb_logger, Dict("train_loss" => sum(losses)))
+                    end
                 else
-                    next!(pr, showvalues=[(:step,"$(step + datapoint)/$(args.epochs*args.steps)"), (:loss,"acc norm stats..."), (:checkpoint, 0)])
+                    if isnothing(args.wandb_logger)
+                        next!(pr, showvalues=[(:step,"$(step + datapoint)/$(args.epochs*args.steps)"), (:loss,"acc norm stats..."), (:checkpoint, 0)])
+                    end
                 end
             else
                 result = train_step(args.training_strategy, (train_tuple..., opt_state))
@@ -293,9 +307,9 @@ function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise, df_tr
                 next!(pr_valid, showvalues = [(:trajectory, "$i/$(meta["n_trajectories_valid"])"), (:valid_loss, "$((valid_error + ve) / i)")])
             end
 
-            finish!(pr_valid)
-
-            clear_log(3)
+            if !isnothing(args.wandb_logger)
+                Wandb.log(args.wandb_logger, Dict("validation_loss" => valid_error / meta["n_trajectories_valid"]))
+            end
 
             if args.training_strategy.plot_progress
                 sim_interval = get_sim_interval(args.training_strategy, (nothing, data, nothing, delta, ntuple(_ -> nothing, 14)...))
