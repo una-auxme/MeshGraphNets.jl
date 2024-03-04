@@ -28,7 +28,7 @@ include("dataset.jl")
 
 export SingleShooting, MultipleShooting, RandomCollocation, Collocation
 
-export train_network, eval_network
+export train_network, eval_network, der_minmax
 
 @kwdef mutable struct Args
     mps::Integer = 15
