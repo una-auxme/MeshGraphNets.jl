@@ -33,25 +33,25 @@ function create_base_graph(data, type_size, type_min, device::Function)
     return device(node_type), device(senders), device(receivers), device(edge_features)
 end
 
-function build_graph(mgn::GraphNetwork, data, fields, datapoint::Integer, node_type, edge_features::AbstractArray{Float32, 2}, senders::AbstractArray{T, 1}, receivers::AbstractArray{T, 1}, is_training::Bool) where {T <: Integer}
-    return build_graph(mgn.n_norm, mgn.e_norm, data, fields, datapoint, node_type, edge_features, senders, receivers, is_training)
+function build_graph(mgn::GraphNetwork, data, fields, datapoint::Integer, node_type, edge_features::AbstractArray{Float32, 2}, senders::AbstractArray{T, 1}, receivers::AbstractArray{T, 1}) where {T <: Integer}
+    return build_graph(mgn.n_norm, mgn.e_norm, data, fields, datapoint, node_type, edge_features, senders, receivers)
 end
 
-function build_graph(mgn::GraphNetwork, data, fields, node_type, edge_features::AbstractArray{Float32, 2}, senders::AbstractArray{T, 1}, receivers::AbstractArray{T, 1}, is_training::Bool) where {T <: Integer}
-    return build_graph(mgn.n_norm, mgn.e_norm, data, fields, 1, node_type, edge_features, senders, receivers, is_training)
+function build_graph(mgn::GraphNetwork, data, fields, node_type, edge_features::AbstractArray{Float32, 2}, senders::AbstractArray{T, 1}, receivers::AbstractArray{T, 1}) where {T <: Integer}
+    return build_graph(mgn.n_norm, mgn.e_norm, data, fields, 1, node_type, edge_features, senders, receivers)
 end
 
-function build_graph(n_norm, e_norm, data, fields, node_type, edge_features::AbstractArray{Float32, 2}, senders::AbstractArray{T, 1}, receivers::AbstractArray{T, 1}, is_training::Bool) where {T <: Integer}
-    return build_graph(n_norm, e_norm, data, fields, 1, node_type, edge_features, senders, receivers, is_training)
+function build_graph(n_norm, e_norm, data, fields, node_type, edge_features::AbstractArray{Float32, 2}, senders::AbstractArray{T, 1}, receivers::AbstractArray{T, 1}) where {T <: Integer}
+    return build_graph(n_norm, e_norm, data, fields, 1, node_type, edge_features, senders, receivers)
 end
 
-function build_graph(n_norm, e_norm, data, fields, datapoint, node_type, edge_features::AbstractArray{Float32, 2}, senders::AbstractArray{T, 1}, receivers::AbstractArray{T, 1}, is_training::Bool) where {T <: Integer}
+function build_graph(n_norm, e_norm, data, fields, datapoint, node_type, edge_features::AbstractArray{Float32, 2}, senders::AbstractArray{T, 1}, receivers::AbstractArray{T, 1}) where {T <: Integer}
     return FeatureGraph(
         vcat(
-            [n_norm[field](data[field][:, :, min(size(data[field], 3), datapoint)], is_training) for field in fields]...,
-            n_norm["node_type"](node_type, is_training)
+            [n_norm[field](data[field][:, :, min(size(data[field], 3), datapoint)]) for field in fields]...,
+            n_norm["node_type"](node_type)
         ),
-        e_norm(edge_features, is_training),
+        e_norm(edge_features),
         senders,
         receivers
     )
