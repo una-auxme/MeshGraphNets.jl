@@ -15,6 +15,23 @@ import TFRecord: read
 
 include("strategies.jl")
 
+"""
+    Dataset(file, file_valid, meta, ch, ch_valid, data, data_valid, cs, current, current_valid)
+
+Data structure for the training, evaluation and test data inside a dataset.
+
+## Arguments
+- `file`: Path of training or test data file (depending on the function call to [load_dataset](@ref)).
+- `file_valid`: Path of validation data file.
+- `meta`: Metadata of the dataset.
+- `ch`: Channel that reads trajectories from the data file.
+- `ch_valid`: Channel that reads trajectories from the validation data file.
+- `data`: Dictionary that stores trajectories that were already read from the data file.
+- `data_valid`: Dictionary that stores trajectories that were already read from the validation data file.
+- `cs`: Size of the data channels.
+- `current`: Index of current trajectory.
+- `current_valid`: Index of current validation trajectory.
+"""
 mutable struct Dataset
     file::String
     file_valid::String
@@ -28,6 +45,18 @@ mutable struct Dataset
     current_valid::Integer
 end
 
+"""
+    parse_data(data, meta)
+
+Converts a TFRecord.Example into a Dictionary with feature names and their data as key-value pairs.
+
+## Arguments
+- `data`: TFRecord.Example that was read from the data file.
+- `meta`: Metadata of the dataset.
+
+## Returns
+- Dictionary of feature names and data as key-value pairs.
+"""
 function parse_data(data::Example, meta::Dict{String, Any})
     out = Dict{String, AbstractArray}()
     for (key, value) in meta["features"]
@@ -42,6 +71,18 @@ function parse_data(data::Example, meta::Dict{String, Any})
     return out
 end
 
+"""
+    load_dataset(path, is_training)
+
+Loads the training & validation data or test data depending on the given argument.
+
+## Arguments
+- `path`: Path to the dataset.
+- `is_training`: Whether the data should be loaded for training or for evaluation.
+
+## Returns
+- [Dataset](@ref) containing the data and metadata.
+"""
 function load_dataset(path::String, is_training::Bool)
     seed!(1234)
     
@@ -127,12 +168,29 @@ function load_dataset(path::String, is_training::Bool)
     return ds
 end
 
-function read_h5!(filename, data_keys, meta, is_jld)
+"""
+    read_h5!(file, data_keys, meta, is_jld)
+
+Reads the given data file and returns the data of the trajectories in individual dictionaires inside the returned Channel.
+
+This function includes:
+- Parsing each feature based on the given metadata.
+- Constructing the mesh based on the dimensions given in the metadata.
+
+## Arguments
+- `file`: Path and name of the data file.
+- `data_keys`: Keys of the trajectories inside the data file.
+- `meta`: Metadata of the dataset.
+- `is_jld`: Determinse the file format of the data files. Set to true if the files are in the JLD2 format, otherwise the HDF5 format is used.
+
+## Returns
+- Channel from which trajectories can be taken.
+"""
+function read_h5!(datafile, data_keys, meta, is_jld)
     feature_names = meta["feature_names"]
     dims = meta["dims"]
     trajectory_length = meta["trajectory_length"]
 
-    li = LinearIndices(Tuple(dims))
     global l = ReentrantLock()
 
     function get_traj(ch)
@@ -161,7 +219,7 @@ function read_h5!(filename, data_keys, meta, is_jld)
                 match_data = Dict()
                 lock(l) do
                     if is_jld
-                        file = jldopen(filename, "r")
+                        file = jldopen(datafile, "r")
                         traj = file[k]
                         rx_match = eachmatch.(rx, keys(traj))
                         deleteat!(rx_match, findall(isnothing, rx_match))
@@ -173,7 +231,7 @@ function read_h5!(filename, data_keys, meta, is_jld)
                             end
                         end
                     else
-                        file = h5open(filename, "r")
+                        file = h5open(datafile, "r")
                         traj = open_group(file, k)
                         rx_match = match.(rx, keys(traj))
                         deleteat!(rx_match, findall(isnothing, rx_match))
@@ -234,60 +292,19 @@ function read_h5!(filename, data_keys, meta, is_jld)
             
             lock(l) do
                 if is_jld
-                    file = jldopen(filename, "r")
+                    file = jldopen(datafile, "r")
                     traj_dict["dt"] = Float32.(file[k][meta["dt"]])
                 else
-                    file = h5open(filename, "r")
+                    file = h5open(datafile, "r")
                     traj_dict["dt"] = Float32.(Base.read(file[k], meta["dt"]))
                 end
                 close(file)
             end
 
-            edges = Vector{Vector{Int32}}() 
-            if haskey(meta, "dims")
-                ################################################
-                # 1D-Meshes are connected in order by their id #
-                ################################################
-                if length(dims) == 1
-                    for i in 1:dims[1]-1
-                        push!(edges, [i, i+1])
-                    end
-                elseif length(dims) == 2
-                    throw(ErrorException("2D-Meshes are not supported yet"))
-                #################################################
-                # 3D-Meshes are connected in order by their id, #
-                # starting the count from z then y and then x   #
-                #################################################
-                elseif length(dims) == 3
-                    dim_x, dim_y, dim_z = dims
-
-                    function add_edge!(edges, x, y, z, cond, shift)
-                        if cond
-                            if traj_dict["node_type"][1, li[x + shift[1], y + shift[2], z + shift[3]], 1] != 1
-                                push!(edges, [li[x, y, z], li[x + shift[1], y + shift[2], z + shift[3]]])
-                            end
-                        end
-                    end
-
-                    for x in 1:dim_x
-                        for y in 1:dim_y
-                            for z in 1:dim_z
-                                if traj_dict["node_type"][1, li[x, y, z], 1] != 1
-                                    add_edge!(edges, x, y, z, x != dim_x, [1, 0, 0])
-                                    add_edge!(edges, x, y, z, y != dim_y, [0, 1, 0])
-                                    add_edge!(edges, x, y, z, z != dim_z, [0, 0, 1])
-                                else
-                                    if [li[x, y, z], li[x, y, z]] ∉ edges
-                                        push!(edges, [li[x, y, z], li[x, y, z]])
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            else
+            if !haskey(meta, "dims")
                 throw(ErrorException("Edges for custom meshes without specifying domain dimensions is not supported yet"))
             end
+            edges = create_edges(dims, traj_dict["node_type"], haskey(meta, "no_edges_node_types") ? meta["no_edges_node_types"] : [])
             traj_dict["edges"] = hcat(sort(edges)...)
 
             put!(ch, traj_dict)
@@ -297,6 +314,82 @@ function read_h5!(filename, data_keys, meta, is_jld)
     return Channel{Dict}(get_traj, 100; spawn = true)
 end
 
+"""
+    create_edges(dims, node_type)
+
+Creates a mesh with the given dimensions 
+
+## Arguments
+- `dims`: Array with the dimensions of the mesh.
+- `node_type`: Array of node types from the data file.
+- `excluded_node_types`: Vector of node types that should not be connected with edges.
+
+## Returns
+- Vector of connected node pair indices (as vectors).
+"""
+function create_edges(dims, node_type, no_edges_node_types)
+    li = LinearIndices(Tuple(dims))
+    edges = Vector{Vector{Int32}}()
+
+    ################################################
+    # 1D-Meshes are connected in order by their id #
+    ################################################
+    if length(dims) == 1
+        for i in 1:dims[1]-1
+            push!(edges, [i, i+1])
+        end
+    
+    ################################################
+    # 2D-Meshes are not supported yet              #
+    ################################################
+    elseif length(dims) == 2
+        throw(ErrorException("2D-Meshes are not supported yet"))
+    
+    #################################################
+    # 3D-Meshes are connected in order by their id, #
+    # starting the count from z then y and then x   #
+    #################################################
+    elseif length(dims) == 3
+        dim_x, dim_y, dim_z = dims
+
+        function add_edge!(edges, x, y, z, cond, shift)
+            if cond
+                if node_type[1, li[x + shift[1], y + shift[2], z + shift[3]], 1] ∉ no_edges_node_types
+                    push!(edges, [li[x, y, z], li[x + shift[1], y + shift[2], z + shift[3]]])
+                end
+            end
+        end
+
+        for x in 1:dim_x
+            for y in 1:dim_y
+                for z in 1:dim_z
+                    if node_type[1, li[x, y, z], 1] ∉ no_edges_node_types
+                        add_edge!(edges, x, y, z, x != dim_x, [1, 0, 0])
+                        add_edge!(edges, x, y, z, y != dim_y, [0, 1, 0])
+                        add_edge!(edges, x, y, z, z != dim_z, [0, 0, 1])
+                    else
+                        if [li[x, y, z], li[x, y, z]] ∉ edges
+                            push!(edges, [li[x, y, z], li[x, y, z]])
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return edges
+end
+
+"""
+    add_targets!(data, fields, device)
+
+Shifts the datapoints beginning from second index back in order to use them as ground truth data (used for collocation strategies).
+
+## Arguments
+- `data`: Data from the dataset containing one trajectory.
+- `fields`: Node features of the MGN.
+- `device`: Device where the data should be loaded (see [Lux GPU Management](https://lux.csail.mit.edu/dev/manual/gpu_management#gpu-management)).
+"""
 function add_targets!(data, fields, device)
     new_data = deepcopy(data)
     for (key, value) in data
@@ -319,6 +412,19 @@ function add_targets!(data, fields, device)
     end
 end
 
+"""
+    preprocess!(data, noise_fields, noise_stddevs, types_noisy, ts, device)
+
+Adds noise to the given features and shuffles the datapoints if a collocation strategy is used.
+
+## Arguments
+- `data`: Data from the dataset containing one trajectory.
+- `noise_fields`: Node features to which noise is added.
+- `noise_stddevs`: Array of standard deviations of the noise, where the length is either one if broadcasted or equal to the length of features.
+- `types_noisy`: Node types to which noise is added.
+- `ts`: Training strategy that is used.
+- `device`: Device where the data should be loaded (see [Lux GPU Management](https://lux.csail.mit.edu/dev/manual/gpu_management#gpu-management)).
+"""
 function preprocess!(data, noise_fields, noise_stddevs, types_noisy, ts, device)
     if length(noise_stddevs) != 1 && length(noise_stddevs) != length(noise_fields)
         throw(DimensionMismatch("dimension of noise must be 1 or match noise fields: noise has dim $(size(noise_stddevs)), noise fields has dim $(size(noise_fields))"))
@@ -346,6 +452,18 @@ function preprocess!(data, noise_fields, noise_stddevs, types_noisy, ts, device)
     end
 end
 
+"""
+    take_trajectory!(dataset, is_training)
+
+Reads a trajectory from the dataset or from the cached Dictionary if already read.
+
+## Arguments
+- `dataset`: Dataset containing the data and metadata.
+- `is_training`: Whether the data should be loaded for training or for evaluation.
+
+## Returns
+- Dictionary with data from the dataset containing one trajectory.
+"""
 function take_trajectory!(dataset::Dataset, is_training::Bool)
     if typeof(dataset.ch) == Channel{Example}
         if is_training
@@ -396,6 +514,24 @@ function take_trajectory!(dataset::Dataset, is_training::Bool)
     end
 end
 
+"""
+    next_trajectory!(dataset, device; types_noisy, noise_stddevs = nothing, ts = nothing, is_training = true)
+
+Returns the next trajectory of the dataset that is preprocessed for the given task.
+
+## Arguments
+- `dataset`: Dataset containing the data and metadata.
+- `device`: Device where the data should be loaded (see [Lux GPU Management](https://lux.csail.mit.edu/dev/manual/gpu_management#gpu-management)).
+
+## Keyword Arguments
+- `types_noisy`: Node types to which noise is added.
+- `noise_stddevs`: Array of standard deviations of the noise, where the length is either one if broadcasted or equal to the length of features.
+- `ts`: Training strategy that is used.
+- `is_training`: Whether the data should be loaded for training or for evaluation.
+
+## Returns
+- Preprocessed trajectory.
+"""
 function next_trajectory!(dataset::Dataset, device::Function; types_noisy, noise_stddevs = nothing, ts = nothing, is_training = true)
     if typeof(dataset.ch) == Channel{Example}
         data = parse_data(take_trajectory!(dataset, is_training), dataset.meta)
@@ -411,6 +547,25 @@ function next_trajectory!(dataset::Dataset, device::Function; types_noisy, noise
     end
 end
 
+"""
+    prepare_trajectory!(data, meta, device; types_noisy, noise_stddevs, ts)
+
+Transfers the data to the given device and configures the data if a collocation strategy is used.
+
+## Arguments
+- `data`: Data from the dataset containing one trajectory.
+- `meta`: Metadata of the dataset.
+- `device`: Device where the data should be loaded (see [Lux GPU Management](https://lux.csail.mit.edu/dev/manual/gpu_management#gpu-management)).
+
+## Keyword Arguments
+- `types_noisy`: Node types to which noise is added.
+- `noise_stddevs`: Array of standard deviations of the noise, where the length is either one if broadcasted or equal to the length of features.
+- `ts`: Training strategy that is used.
+
+## Returns
+- Transfered data.
+- Metadata of the dataset.
+"""
 function prepare_trajectory!(data, meta, device::Function; types_noisy, noise_stddevs, ts)
     if !isnothing(ts) && (typeof(ts) <: CollocationStrategy)
         add_targets!(data, meta["target_features"], device)

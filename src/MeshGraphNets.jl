@@ -14,10 +14,9 @@ using Wandb
 using Zygote
 
 import DifferentialEquations: ODEProblem, OrdinaryDiffEqAlgorithm, Tsit5
-import ProgressMeter: Progress, ProgressUnknown
+import ProgressMeter: Progress
 
 import Base: @kwdef
-import ChainRulesCore: @ignore_derivatives
 import DifferentialEquations: solve, remake
 import HDF5: h5open, create_group, open_group
 import ProgressMeter: next!, update!, finish!
@@ -25,6 +24,7 @@ import Statistics: mean
 
 include("utils.jl")
 include("graph.jl")
+include("solve.jl")
 include("dataset.jl")
 
 export SingleShooting, MultipleShooting, RandomCollocation, Collocation
@@ -47,74 +47,28 @@ export train_network, eval_network, der_minmax
     gpu_idx::Integer = CUDA.deviceid()
     cell_idxs::Vector{Integer} = [0]
     num_rollouts::Integer = 10
+    use_valid::Bool = true
     solver_valid::OrdinaryDiffEqAlgorithm = Tsit5()
     solver_valid_dt::Union{Nothing, Float32} = nothing
     wandb_logger::Union{Nothing, Wandb.WandbLogger} = nothing
 end
 
 """
-    train_network(noise_stddevs, opt, ds_path, cp_path; kws...)
+    calc_norms(dataset, device)
 
-Starts the training process with the given configuration.
+Initializes the normalisers based on the given dataset and its metadata.
 
-# Arguments
-- `noise_stddevs`: Array containing the noise that is added to the specified node types.
-- `opt`: Optimiser that is used for training.
-- `ds_path`: Path to the dataset folder.
-- `cp_path`: Path where checkpoints are being saved to.
-- `kws`: Keyword arguments that customize the training process.
+## Arguments
+- `dataset`: Dataset on which the normalisers should be initialized on.
+- `device`: Device where the normaliser should be loaded (see [Lux GPU Management](https://lux.csail.mit.edu/dev/manual/gpu_management#gpu-management)).
 
-# Keyword Arguments
-- `mps = 15`: Number of message passing steps.
-- `layer_size = 256`: Latent size of the hidden layers inside MLPs.
-- `hidden_layers = 2`: Number of hidden layers inside MLPs.
-- `batchsize = 1`: Size per batch *(not implemented yet)*.
-- `epochs = 1`: Number of epochs.
-- `steps = 10e6`: Number of training steps.
-- `checkpoint = 10000`: Number of steps after which checkpoints are created.
-- `norm_steps = 1000`: Number of steps before training (accumulate normalization stats).
-- `types_updated = [0, 5]`: Array containing node types which are updated after each step.
-- `types_noisy = [0]`: Array containing node types which noise is added to.
-- `training_strategy = Collocation()`: Methods used for training. See 
-- `use_cuda = true`: Whether a GPU is used for training or not (if available). Currently only CUDA GPUs are supported.
-- `gpu_idx = 0`: Index of GPU. See *nvidia-smi* for reference.
-- `cell_idxs = [0]`: Indices of cells that are plotted during validation (if enabled).
-- `solver_valid = Tsit5()`: Which solver should be used for validation during training.
-- `solver_valid_dt = nothing`: If set, the solver for validation will use fixed timesteps.
-
-# Training Strategies
-- `Collocation`
-- `RandomCollocation`
-- `SingleShooting`
-- `MultipleShooting`
-
-See [documentation](https://una-auxme.github.io/MeshGraphNets.jl/dev/cylinder_flow) for reference.
-
-# Returns
-- `mgn`: The trained network as a [`GraphNetwork`](@ref) struct.
+## Returns
+- Sum of each dimension of feature.
+- Dictionary of each edge feature and its normaliser as key-value pair.
+- Dictionary of each node feature and its normaliser as key-value pair.
+- Dictionary of each output feature and its normaliser as key-value pair.
 """
-function train_network(noise_stddevs, opt, ds_path, cp_path; kws...)
-    args = Args(;kws...)
-
-    if CUDA.functional() && args.use_cuda
-        @info "Training on CUDA GPU..."
-        CUDA.device!(args.gpu_idx)
-        CUDA.allowscalar(false)
-        device = gpu_device()
-    else
-        @info "Training on CPU..."
-        device = cpu_device()
-    end
-
-    @info "Training with $(typeof(args.training_strategy))..."
-
-    println("Loading training data...")
-    dataset = load_dataset(ds_path, true)
-    clear_log(1)
-    @info "Training data loaded!"
-
-    println("Building model...")
-
+function calc_norms(dataset, device)
     quantities = 0
     n_norms = Dict{String, Union{NormaliserOffline, NormaliserOnline}}()
     o_norms = Dict{String, Union{NormaliserOffline, NormaliserOnline}}()
@@ -183,6 +137,75 @@ function train_network(noise_stddevs, opt, ds_path, cp_path; kws...)
         end
     end
 
+    return quantities, e_norms, n_norms, o_norms
+end
+
+"""
+    train_network(noise_stddevs, opt, ds_path, cp_path; kws...)
+
+Starts the training process with the given configuration.
+
+## Arguments
+- `noise_stddevs`: Array containing the standard deviations of the noise that is added to the specified node types, where the length is either one if broadcasted or equal to the length of features.
+- `opt`: Optimiser that is used for training.
+- `ds_path`: Path to the dataset folder.
+- `cp_path`: Path where checkpoints are being saved to.
+- `kws`: Keyword arguments that customize the training process.
+
+## Keyword Arguments
+- `mps = 15`: Number of message passing steps.
+- `layer_size = 128`: Latent size of the hidden layers inside MLPs.
+- `hidden_layers = 2`: Number of hidden layers inside MLPs.
+- `batchsize = 1`: Size per batch *(not implemented yet)*.
+- `epochs = 1`: Number of epochs.
+- `steps = 10e6`: Number of training steps.
+- `checkpoint = 10000`: Number of steps after which checkpoints are created.
+- `norm_steps = 1000`: Number of steps before training (accumulate normalization stats).
+- `types_updated = [0, 5]`: Array containing node types which are updated after each step.
+- `types_noisy = [0]`: Array containing node types which noise is added to.
+- `training_strategy = Collocation()`: Methods used for training. See [documentation](https://una-auxme.github.io/MeshGraphNets.jl/dev/strategies/).
+- `use_cuda = true`: Whether a GPU is used for training or not (if available). Currently only CUDA GPUs are supported.
+- `gpu_idx = CUDA.deviceid()`: Index of GPU. See *nvidia-smi* for reference.
+- `cell_idxs = [0]`: Indices of cells that are plotted during validation (if enabled).
+- `solver_valid = Tsit5()`: Which solver should be used for validation during training.
+- `solver_valid_dt = nothing`: If set, the solver for validation will use fixed timesteps.
+- `wandb_logger` = nothing: If set, a [Wandb.WandbLogger](@ref) will be used for logging the training.
+
+## Training Strategies
+- `Collocation`
+- `RandomCollocation`
+- `SingleShooting`
+- `MultipleShooting`
+
+See [CylinderFlow Example](https://una-auxme.github.io/MeshGraphNets.jl/dev/cylinder_flow) for reference.
+
+## Returns
+- Trained network as a [`GraphNetwork`](@ref) struct.
+"""
+function train_network(noise_stddevs, opt, ds_path, cp_path; kws...)
+    args = Args(;kws...)
+
+    if CUDA.functional() && args.use_cuda
+        @info "Training on CUDA GPU..."
+        CUDA.device!(args.gpu_idx)
+        CUDA.allowscalar(false)
+        device = gpu_device()
+    else
+        @info "Training on CPU..."
+        device = cpu_device()
+    end
+
+    @info "Training with $(typeof(args.training_strategy))..."
+
+    println("Loading training data...")
+    dataset = load_dataset(ds_path, true)
+    clear_log(1, false)
+    @info "Training data loaded!"
+
+    println("Building model...")
+
+    quantities, e_norms, n_norms, o_norms = calc_norms(dataset, device)
+
     dims = dataset.meta["dims"]
     outputs = 0
     for tf in dataset.meta["target_features"]
@@ -192,23 +215,37 @@ function train_network(noise_stddevs, opt, ds_path, cp_path; kws...)
     mgn, opt_state, df_train, df_valid = load(quantities, typeof(dims) <: AbstractArray ? length(dims) : dims, e_norms, n_norms, o_norms, outputs, args.mps, args.layer_size, args.hidden_layers, opt, device, cp_path)
 
     if isnothing(opt_state)
-        if typeof(opt) <: AbstractRule
-            opt_state = Optimisers.setup(opt, mgn.ps)
-        else 
-            opt_state = opt
-        end
+        opt_state = Optimisers.setup(opt, mgn.ps)
     end
     Lux.trainmode(mgn.st)
 
-    clear_log(1)
+    
+    clear_log(1, false)
     @info "Model built!"
-    println("Compiling code...")
+    print("Compiling code...")
+    print("\u1b[1G")
 
     train_mgn!(mgn, opt_state, dataset, noise_stddevs, df_train, df_valid, device, cp_path, args)
 
     return mgn
 end
 
+"""
+    train_mgn!(mgn, opt_state, dataset, noise, df_train, df_valid, device, cp_path, args)
+
+Initializes the network and performs the training loop.
+
+## Arguments
+- `mgn`: [GraphNetwork](@ref) that should be trained.
+- `opt_state`: State of the optimiser.
+- `dataset`: Dataset containing the training, validation data and metadata.
+- `noise`: Noise that is added to the node types specified in `args`.
+- `df_train`: [DataFrames.jl](https://github.com/JuliaData/DataFrames.jl) DataFrame that stores the train losses at the checkpoints.
+- `df_valid`: [DataFrames.jl](https://github.com/JuliaData/DataFrames.jl) DataFrame that stores the validation losses at the checkpoints (only improvements are saved).
+- `device`: Device where the normaliser should be loaded (see [Lux GPU Management](https://lux.csail.mit.edu/dev/manual/gpu_management#gpu-management)).
+- `cp_path`: Path where checkpoints are saved.
+- `args`: Keyword arguments for configuring the training.
+"""
 function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise, df_train, df_valid, device::Function, cp_path, args::Args)
     checkpoint = length(df_train.step) > 0 ? last(df_train.step) : 0
     step = checkpoint
@@ -218,7 +255,6 @@ function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise, df_tr
 
     if isnothing(args.wandb_logger)
         pr = Progress(args.epochs*args.steps; desc = "Training progress: ", dt=1.0, barlen=50, start=checkpoint, showspeed=true)
-        clear_log(1)
         update!(pr)
     else
         pr = nothing
@@ -230,12 +266,10 @@ function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise, df_tr
 
     delta = get_delta(args.training_strategy, dataset.meta["trajectory_length"])
 
-    callback_plt = args.training_strategy.plot_progress ? get_plt_callback(args.training_strategy, args.cell_idxs, cp_path) : nothing
-
     train_tuple_additional = prepare_training(args.training_strategy)
 
     for _ in checkpoint:delta:args.steps*args.epochs
-        data, meta = next_trajectory!(dataset, device; types_noisy = args.types_noisy, noise_stddevs=noise, ts = args.training_strategy)
+        data, meta = next_trajectory!(dataset, device; types_noisy = args.types_noisy, noise_stddevs = noise, ts = args.training_strategy)
         
         mask = Int32.(findall(x -> x in args.types_updated, data["node_type"][1, :, 1])) |> device
         
@@ -246,28 +280,25 @@ function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise, df_tr
 
         for datapoint in 1:delta
             train_tuple = init_train_step(args.training_strategy, (mgn, data, meta, fields, meta["target_features"], node_type, edge_features, senders, receivers, datapoint, mask, val_mask), train_tuple_additional)
-            if typeof(opt_state) <: Optimisers.Leaf
-                gs, losses = train_step(args.training_strategy, (train_tuple..., nothing))
+            
+            gs, losses = train_step(args.training_strategy, train_tuple)
                 
-                tmp_loss += sum(losses)
+            tmp_loss += sum(losses)
 
-                if step + datapoint > args.norm_steps
-                    for i in eachindex(gs)
-                        opt_state, ps = Optimisers.update(opt_state, mgn.ps, gs[i])
-                        mgn.ps = ps
-                    end
-                    if isnothing(args.wandb_logger)
-                        next!(pr, showvalues=[(:train_step,"$(step + datapoint)/$(args.epochs*args.steps)"), (:train_loss, sum(losses)), (:checkpoint, length(df_train.step) > 0 ? last(df_train.step) : 0), (:data_interval, delta == 1 ? "1:end" : 1:delta), (:min_validation_loss, min_validation_loss), (:last_validation_loss, last_validation_loss)])
-                    else
-                        Wandb.log(args.wandb_logger, Dict("train_loss" => sum(losses)))
-                    end
+            if step + datapoint > args.norm_steps
+                for i in eachindex(gs)
+                    opt_state, ps = Optimisers.update(opt_state, mgn.ps, gs[i])
+                    mgn.ps = ps
+                end
+                if isnothing(args.wandb_logger)
+                    next!(pr, showvalues=[(:train_step,"$(step + datapoint)/$(args.epochs*args.steps)"), (:train_loss, sum(losses)), (:checkpoint, length(df_train.step) > 0 ? last(df_train.step) : 0), (:data_interval, delta == 1 ? "1:end" : 1:delta), (:min_validation_loss, min_validation_loss), (:last_validation_loss, last_validation_loss)])
                 else
-                    if isnothing(args.wandb_logger)
-                        next!(pr, showvalues=[(:step,"$(step + datapoint)/$(args.epochs*args.steps)"), (:loss,"acc norm stats..."), (:checkpoint, 0)])
-                    end
+                    Wandb.log(args.wandb_logger, Dict("train_loss" => sum(losses)))
                 end
             else
-                result = train_step(args.training_strategy, (train_tuple..., opt_state))
+                if isnothing(args.wandb_logger)
+                    next!(pr, showvalues=[(:step,"$(step + datapoint)/$(args.epochs*args.steps)"), (:loss,"acc norm stats..."), (:checkpoint, 0)])
+                end
             end
         end
 
@@ -294,8 +325,8 @@ function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise, df_tr
                 inflow_mask_valid = repeat(data["node_type"][:, :, 1] .== 1, sum(size(data[field], 1) for field in meta["target_features"]), 1) |> device
 
                 ve, g, p = validation_step(args.training_strategy, (
-                    mgn, data_valid, meta_valid, delta, args.solver_valid, args.solver_valid_dt, fields, node_type_valid, edge_features_valid, senders_valid, receivers_valid, mask, val_mask_valid,
-                    inflow_mask_valid, data, opt_state, step, avg_loss, cp_path, tmp_loss, rollout
+                    mgn, data_valid, meta_valid, delta, args.solver_valid, args.solver_valid_dt, fields, node_type_valid,
+                    edge_features_valid, senders_valid, receivers_valid, mask, val_mask_valid, inflow_mask_valid, data
                 ))
                 
                 valid_error += ve
@@ -309,11 +340,6 @@ function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise, df_tr
 
             if !isnothing(args.wandb_logger)
                 Wandb.log(args.wandb_logger, Dict("validation_loss" => valid_error / meta["n_trajectories_valid"]))
-            end
-
-            if args.training_strategy.plot_progress
-                sim_interval = get_sim_interval(args.training_strategy, (nothing, data, nothing, delta, ntuple(_ -> nothing, 14)...))
-                callback_plt(valid_error / meta["n_trajectories_valid"], sim_interval, gt[1, :, :], prediction[1, :, :]; xlims = (sim_interval[1] - data["dt"][2], sim_interval[end] + data["dt"][2]))
             end
 
             if valid_error / meta["n_trajectories_valid"] < min_validation_loss
@@ -332,17 +358,12 @@ function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise, df_tr
     end
 end
 
-
-Zygote.accum(x::NamedTuple{(:model, :ps, :st, :e_norm, :n_norm, :o_norm)}, y::Base.RefValue{Any}) = Zygote.accum(x, y[])
-
-Base.:+(x::NamedTuple{(:model, :ps, :st, :e_norm, :n_norm, :o_norm)}, y::Base.RefValue{Any}) = Zygote.accum(x, y[])
-
 """
     eval_network(ds_path, cp_path, out_path, solver; start, stop, dt, saves, mse_steps, kws...)
 
 Starts the evaluation process with the given configuration.
 
-# Arguments
+## Arguments
 - `ds_path`: Path to the dataset folder.
 - `cp_path`: Path where checkpoints are being saved to.
 - `out_path`: Path where the result is being saved to.
@@ -354,14 +375,15 @@ Starts the evaluation process with the given configuration.
 - `mse_steps`: Time steps where the relative error is printed at.
 - `kws`: Keyword arguments that customize the training process. **The configuration of the system has to be the same as during training**.
 
-# Keyword Arguments
+## Keyword Arguments
 - `mps = 15`: Number of message passing steps.
-- `layer_size = 256`: Latent size of the hidden layers inside MLPs.
+- `layer_size = 128`: Latent size of the hidden layers inside MLPs.
 - `hidden_layers = 2`: Number of hidden layers inside MLPs.
 - `types_updated = [0, 5]`: Array containing node types which are updated after each step.
 - `use_cuda = true`: Whether a GPU is used for training or not (if available). Currently only CUDA GPUs are supported.
-- `gpu_idx = 0`: Index of GPU. See *nvidia-smi* for reference.
+- `gpu_idx = CUDA.deviceid()`: Index of GPU. See *nvidia-smi* for reference.
 - `num_rollouts = 10`: Number of trajectories that are simulated (from the test dataset).
+- `use_valid = true`: Whether the last checkpoint with the minimal validation loss should be used.
 """
 function eval_network(ds_path, cp_path::String, out_path::String, solver = nothing; start, stop, dt = nothing, saves, mse_steps, kws...)
     args = Args(;kws...)
@@ -379,79 +401,13 @@ function eval_network(ds_path, cp_path::String, out_path::String, solver = nothi
     println("Loading evaluation data...")
     dataset = load_dataset(ds_path, false)
 
-    clear_log(1)
+    clear_log(1, false)
     @info "Evaluation data loaded!"
 
 
     println("Building model...")
 
-    quantities = 0
-    n_norms = Dict{String, Union{NormaliserOffline, NormaliserOnline}}()
-    o_norms = Dict{String, Union{NormaliserOffline, NormaliserOnline}}()
-
-    if haskey(dataset.meta, "edges")
-        e_norms = NormaliserOffline(Float32(dataset.meta["edges"]["data_min"]), Float32(dataset.meta["edges"]["data_max"]))
-    else
-        e_norms = NormaliserOnline(length(dataset.meta["dims"]) + 1, device)
-    end
-
-    for feature in dataset.meta["feature_names"]
-        if feature == "mesh_pos" || feature == "cells"
-            continue
-        end
-        if getfield(Base, Symbol(uppercasefirst(dataset.meta["features"][feature]["dtype"]))) == Bool
-            quantities += 1
-            n_norms[feature] = NormaliserOffline(0.0f0, 1.0f0)
-            if feature in dataset.meta["target_features"]
-                o_norms[feature] = NormaliserOffline(0.0f0, 1.0f0)
-            end
-        elseif getfield(Base, Symbol(uppercasefirst(dataset.meta["features"][feature]["dtype"]))) == Int32
-            if haskey(dataset.meta["features"][feature], "onehot") && dataset.meta["features"][feature]["onehot"]
-                quantities += dataset.meta["features"][feature]["data_max"] - dataset.meta["features"][feature]["data_min"] + 1
-                if haskey(dataset.meta["features"][feature], "target_min") && haskey(dataset.meta["features"][feature], "target_max")
-                    n_norms[feature] = NormaliserOffline(0.0f0, 1.0f0, Float32(dataset.meta["features"][feature]["target_min"]), Float32(dataset.meta["features"][feature]["target_max"]))
-                    if feature in dataset.meta["target_features"]
-                        o_norms[feature] = NormaliserOffline(0.0f0, 1.0f0, Float32(dataset.meta["features"][feature]["target_min"]), Float32(dataset.meta["features"][feature]["target_max"]))
-                    end
-                else
-                    n_norms[feature] = NormaliserOffline(0.0f0, 1.0f0)
-                    if feature in dataset.meta["target_features"]
-                        o_norms[feature] = NormaliserOffline(0.0f0, 1.0f0)
-                    end
-                end
-            else
-                throw(ErrorException("Int32 types that are not onehot types are not supported yet."))
-            end
-        else
-            quantities += dataset.meta["features"][feature]["dim"]
-            if haskey(dataset.meta["features"][feature], "data_min") && haskey(dataset.meta["features"][feature], "data_max")
-                if haskey(dataset.meta["features"][feature], "target_min") && haskey(dataset.meta["features"][feature], "target_max")
-                    n_norms[feature] = NormaliserOffline(Float32(dataset.meta["features"][feature]["data_min"]), Float32(dataset.meta["features"][feature]["data_max"]), Float32(dataset.meta["features"][feature]["target_min"]), Float32(dataset.meta["features"][feature]["target_max"]))
-                    if feature in dataset.meta["target_features"]
-                        if haskey(dataset.meta["features"][feature], "output_min") && haskey(dataset.meta["features"][feature], "output_max")
-                            o_norms[feature] = NormaliserOffline(Float32(dataset.meta["features"][feature]["output_min"]), Float32(dataset.meta["features"][feature]["output_max"]), Float32(dataset.meta["features"][feature]["target_min"]), Float32(dataset.meta["features"][feature]["target_max"]))
-                        else
-                            o_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(args.norm_steps))
-                        end
-                    end
-                else
-                    n_norms[feature] = NormaliserOffline(Float32(dataset.meta["features"][feature]["data_min"]), Float32(dataset.meta["features"][feature]["data_max"]))
-                    if feature in dataset.meta["target_features"]
-                        if haskey(dataset.meta["features"][feature], "output_min") && haskey(dataset.meta["features"][feature], "output_max")
-                            o_norms[feature] = NormaliserOffline(Float32(dataset.meta["features"][feature]["output_min"]), Float32(dataset.meta["features"][feature]["output_max"]))
-                        else
-                            o_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(args.norm_steps))
-                        end
-                    end
-                end
-            else
-                n_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(args.norm_steps))
-                if feature in dataset.meta["target_features"]
-                    o_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(args.norm_steps))
-                end
-            end
-        end
-    end
+    quantities, e_norms, n_norms, o_norms = calc_norms(dataset, device)
 
     dims = dataset.meta["dims"]
     outputs = 0
@@ -459,15 +415,33 @@ function eval_network(ds_path, cp_path::String, out_path::String, solver = nothi
         outputs += dataset.meta["features"][tf]["dim"]
     end
 
-    mgn, _, _, _ = load(quantities, typeof(dims) <: AbstractArray ? length(dims) : dims, e_norms, n_norms, o_norms, outputs, args.mps, args.layer_size, args.hidden_layers, nothing, device, cp_path)
+    mgn, _, _, _ = load(quantities, typeof(dims) <: AbstractArray ? length(dims) : dims, e_norms, n_norms, o_norms, outputs, args.mps, args.layer_size, args.hidden_layers, nothing, device, args.use_valid ? joinpath(cp_path, "valid") : cp_path)
     Lux.testmode(mgn.st)
 
-    clear_log(1)
+    clear_log(1, false)
     @info "Model built!"
 
     eval_network!(solver, mgn, dataset, device, out_path, start, stop, dt, saves, mse_steps, args)
 end
 
+"""
+    eval_network!(solver, mgn, dataset, device, out_path, start, stop, dt, saves, mse_steps, args)
+
+Initializes the network, performs evaluation for the given number of rollouts and saves the results.
+
+## Arguments
+- `solver`: Solver that is used for evaluating the system.
+- `mgn`: [GraphNetwork](@ref) that should be evaluated.
+- `dataset`: Dataset containing the test data and metadata.
+- `device`: Device where the normaliser should be loaded (see [Lux GPU Management](https://lux.csail.mit.edu/dev/manual/gpu_management#gpu-management)).
+- `out_path`: Path where the evaluated trajectories are saved at.
+- `start`: Start time of the simulation.
+- `stop`: End time of the simulation.
+- `dt`: If provided, changes the solver to use fixed step sizes.
+- `saves`: Time steps where the solution is saved at.
+- `mse_steps`: Time steps where the relative error is printed at.
+- `args`: Keyword arguments for configuring the evaluation.
+"""
 function eval_network!(solver, mgn::GraphNetwork, dataset::Dataset, device::Function, out_path, start, stop, dt, saves, mse_steps, args::Args)
     local traj_ops = Dict{Tuple{Int, String}, Array{Float32, 3}}()
     local errors = Dict{Tuple{Int, String}, Array{Float32, 2}}()
@@ -556,89 +530,6 @@ function eval_network!(solver, mgn::GraphNetwork, dataset::Dataset, device::Func
     end
 
     @info "Evaluation completed!"
-end
-
-function rollout(solver, mgn::GraphNetwork, initial_state, fields, meta, target_fields, target_dict, node_type, edge_features, senders, receivers, val_mask, inflow_mask, data, start, stop, dt, saves; show_progress = true)
-    pr = show_progress ? ProgressUnknown(showspeed = true) : nothing
-
-    interval = (start, stop)
-    x0 = vcat([initial_state[field] for field in target_fields]...)
-    inputs = deepcopy(initial_state)
-    for i in keys(target_dict)
-        delete!(inputs, i)
-    end
-    prob = ODEProblem(fast_step, x0, interval, (mgn, mgn.ps, data, inputs, fields, meta, target_fields, target_dict, node_type, edge_features, senders, receivers, val_mask, inflow_mask, saves, saves[2] - saves[1], pr))
-    if isnothing(dt)
-        sol = solve(prob, solver; saveat = saves, tstops = saves)
-    else
-        sol = solve(prob, solver; adaptive = false, dt = dt, saveat = saves)
-    end
-    
-    if show_progress
-        finish!(pr)
-    end
-    
-    return sol.u, sol.t
-end
-
-function fast_step_solve(x, (mgn, ps, data, inputs, fields, meta, target_fields, target_dict, node_type, edge_features, senders, receivers, val_mask, inflow_mask, strategy, pr), t)
-    bx = Zygote.Buffer(x)
-    bx[:, :] = x
-    bx[inflow_mask] = vcat([data[field][:, :, floor(Int, t / strategy.dt) + 1] for field in target_fields]...)[inflow_mask]
-
-    offset = 1
-    for k in target_fields
-        inputs[k] = x[offset:offset + target_dict[k] - 1, :]
-        offset += target_dict[k]
-    end
-
-    graph = build_graph(mgn, inputs, fields, node_type, edge_features, senders, receivers)
-    output, st = mgn.model(graph, ps, mgn.st)
-    mgn.st = st
-
-    indices = [meta["features"][tf]["dim"] for tf in target_fields]
-
-    buf = Zygote.Buffer(output)
-    for i in 1:length(target_fields)
-        buf[sum(indices[1:i-1])+1:sum(indices[1:i]), :] = inverse_data(mgn.o_norm[target_fields[i]], output[sum(indices[1:i-1])+1:sum(indices[1:i]), :])
-    end
-    
-    @ignore_derivatives begin
-        if !isnothing(pr)
-            next!(pr, showvalues=[(:t,"$(t)")])
-        end
-    end
-    
-    return copy(buf) .* val_mask
-end
-
-function fast_step(x, (mgn, ps, data, inputs, fields, meta, target_fields, target_dict, node_type, edge_features, senders, receivers, val_mask, inflow_mask, saves, saves_dt, pr), t)
-    x[inflow_mask] = vcat([data[field][:, :, floor(Int, t / saves_dt) + 1] for field in target_fields]...)[inflow_mask]
-
-    offset = 1
-    for k in target_fields
-        inputs[k] = x[offset:offset + target_dict[k] - 1, :]
-        offset += target_dict[k]
-    end
-
-    graph = build_graph(mgn, inputs, fields, node_type, edge_features, senders, receivers)
-    output, st = mgn.model(graph, ps, mgn.st)
-    mgn.st = st
-
-    indices = [meta["features"][tf]["dim"] for tf in target_fields]
-
-    buf = Zygote.Buffer(output)
-    for i in 1:length(target_fields)
-        buf[sum(indices[1:i-1])+1:sum(indices[1:i]), :] = inverse_data(mgn.o_norm[target_fields[i]], output[sum(indices[1:i-1])+1:sum(indices[1:i]), :])
-    end
-    
-    @ignore_derivatives begin
-        if !isnothing(pr)
-            next!(pr, showvalues=[(:t,"$(t)")])
-        end
-    end
-    
-    return copy(buf) .* val_mask
 end
 
 end

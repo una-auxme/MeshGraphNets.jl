@@ -4,21 +4,114 @@
 #
 
 import DifferentialEquations: ODEFunction
-import Optimization: AutoZygote, OptimizationFunction, OptimizationProblem
 import SciMLBase: AbstractSensitivityAlgorithm
 import SciMLSensitivity: InterpolatingAdjoint, ZygoteVJP
 
-import Optimization: solve
+#######################################################
+# Abstract type and functions for training strategies #
+#######################################################
 
 abstract type TrainingStrategy end
 
+"""
+    prepare_training(strategy)
+
+Function that is executed once before training. Can be overwritten by training strategies if necessary.
+
+## Arguments
+- `strategy`: Used training strategy.
+
+## Returns
+- Tuple containing the results of the function.
+"""
 function prepare_training(::TrainingStrategy) 
     return (nothing,)
 end
 
-function validation_step(::TrainingStrategy, t::Tuple, sim_interval, data_interval)
+"""
+    get_delta(strategy, trajectory_length)
 
-    mgn, data, meta, delta, solver, solver_dt, fields, node_type, edge_features, senders, receivers, mask, val_mask, inflow_mask, data, opt_state, step, avg_loss, cp_path, tmp_loss, rollout = t
+Returns the delta between samples in the training data.
+
+## Arguments
+- `strategy`: Used training strategy.
+- Trajectory length (used for collocation strategies).
+
+## Returns
+- Delta between samples in the training data.
+"""
+function get_delta(strategy::TrainingStrategy, ::Integer)
+    throw(ArgumentError("Unknown training strategy: $strategy. See [documentation](https://una-auxme.github.io/MeshGraphNets.jl/dev/strategies/) for available strategies."))
+end
+
+"""
+    init_train_step(strategy, t, ta)
+
+Function that is executed before each training sample.
+
+## Arguments
+- `strategy`: Used training strategy.
+- `t`: Tuple containing the variables necessary for initializing training.
+- `ta`: Tuple with additional variables that is returned from [prepare_training](@ref).
+
+## Returns
+- Tuple containing variables needed for [train_step](@ref).
+"""
+function init_train_step(strategy::TrainingStrategy, ::Tuple, ::Tuple)
+    throw(ArgumentError("Unknown training strategy: $strategy. See [documentation](https://una-auxme.github.io/MeshGraphNets.jl/dev/strategies/) for available strategies."))
+end
+
+"""
+    train_step(strategy, t)
+
+Performs a single training step and return the resulting gradients and loss.
+
+## Arguments
+- `strategy`: Solver strategy that is used for training.
+- `t`: Tuple that is returned from [`init_train_step`](@ref).
+
+## Returns
+- Gradients for optimization step.
+- Loss for optimization step.
+"""
+function train_step(strategy::TrainingStrategy, ::Tuple)
+    throw(ArgumentError("Unknown training strategy: $strategy. See [documentation](https://una-auxme.github.io/MeshGraphNets.jl/dev/strategies/) for available strategies."))
+end
+
+"""
+    validation_step(strategy, t)
+
+Performs validation of a single trajectory. Should be overwritten by training strategies to determine simulation and data interval before calling the inner function [_validation_step](@ref).
+
+## Arguments
+- `strategy`: Type of training strategy (used for dispatch).
+- `t`: Tuple containing the variables necessary for validation.
+
+## Returns
+- See [_validation_step](@ref).
+"""
+function validation_step(strategy::TrainingStrategy, ::Tuple)
+    throw(ArgumentError("Unknown training strategy: $strategy. See [documentation](https://una-auxme.github.io/MeshGraphNets.jl/dev/strategies/) for available strategies."))
+end
+
+"""
+    _validation_step(t, sim_interval, data_interval)
+
+Inner function for validation of a single trajectory.
+
+## Arguments
+- `t`: Tuple containing the variables necessary for validation.
+- `sim_interval`: Interval that determines the simulated time for the validation.
+- `data_interval`: Interval that determines the indices of the timesteps in ground truth and prediction data.
+
+## Returns
+- Loss calculated on the difference between ground truth and prediction (via mse).
+- Ground truth data with `data_interval` as timesteps.
+- Prediction data with `data_interval` as timesteps.
+"""
+function _validation_step(t::Tuple, sim_interval, data_interval)
+
+    mgn, data, meta, _, solver, solver_dt, fields, node_type, edge_features, senders, receivers, mask, val_mask, inflow_mask, data = t
 
     initial_state = Dict(
         [typeof(v) <: AbstractArray ? (k, v[:, :, 1]) : (k, v) for (k,v) in data]
@@ -38,6 +131,10 @@ function validation_step(::TrainingStrategy, t::Tuple, sim_interval, data_interv
 
     return mean(error[mask]), gt, prediction
 end
+
+####################################################################
+# Abstract type and functions for solver based training strategies #
+####################################################################
 
 abstract type SolverStrategy <: TrainingStrategy end
 
@@ -76,57 +173,59 @@ end
 
 function train_step(strategy::SolverStrategy, t::Tuple)
 
-    mgn, data, inputs, fields, meta, target_fields, target_dict, node_type, edge_features, senders, receivers, val_mask, u0, gt, opt = t
+    mgn, data, inputs, fields, meta, target_fields, target_dict, node_type, edge_features, senders, receivers, val_mask, u0, gt = t
 
     inflow_mask = repeat(data["node_type"][:, :, 1] .== 1, sum(size(data[field], 1) for field in meta["target_features"]), 1) |> cpu_device()
 
     pr = ProgressUnknown(showspeed = true)
 
-    ff = ODEFunction{false}((x, p, t) -> fast_step_solve(x, (mgn, p, data, inputs, fields, meta, target_fields, target_dict, node_type, edge_features, senders, receivers, val_mask, inflow_mask, strategy, pr), t))
+    ff = ODEFunction{false}((x, p, t) -> ode_func_train(x, (mgn, p, data, inputs, fields, meta, target_fields, target_dict, node_type, edge_features, senders, receivers, val_mask, inflow_mask, strategy, pr), t))
     prob = ODEProblem(ff, u0, (strategy.tstart, strategy.tstop), mgn.ps)
 
-    if !isnothing(opt)
-        adtype = AutoZygote()
-        optf = OptimizationFunction((x, p) -> train_loss(strategy, (prob, ps, u0, nothing, gt, val_mask)), adtype)
-        opt_prob = OptimizationProblem(optf, mgn.ps)
-        result = solve(opt_prob, opt; maxiters = 300)
-
-        return result
-    else
-        shoot_loss, back = Zygote.pullback(ps -> train_loss(strategy, (prob, ps, u0, nothing, gt, val_mask)), mgn.ps)
-
-        shoot_gs = back(one(shoot_loss))
-
-        return shoot_gs, shoot_loss
-    end
-end
-
-function get_sim_interval(strategy::SolverStrategy, ::Tuple)
-    return strategy.tstart:strategy.dt:strategy.tstop
-end
-
-function validation_step(strategy::SolverStrategy, t::Tuple)
-    sim_interval = get_sim_interval(strategy, (nothing,))
-    data_interval = 1:length(sim_interval)
-
-    return validation_step(strategy, t, sim_interval, data_interval)
+    shoot_loss, back = Zygote.pullback(ps -> train_loss(strategy, (prob, ps, u0, nothing, gt, val_mask, mgn.n_norm, target_fields, [meta["features"][tf]["dim"] for tf in target_fields])), mgn.ps)
+    shoot_gs = back(one(shoot_loss))
+    return shoot_gs, shoot_loss
 end
 
 """
-    SingleShooting(tstart, dt, tstop, solver; sense = InterpolatingAdjoint(autojacvec = ZygoteVJP()), plot_progress = false, solargs...)
+    train_loss(strategy, t)
+
+Inner function for a solver based training step that calculates the loss based on the difference between the ground truth and the predicted solution.
+
+## Arguments
+- `strategy`: Solver strategy that is used for training.
+- `t`: Tuple containing all variables necessary for loss calculation.
+
+## Returns
+- Calculated loss.
+"""
+function train_loss(strategy::SolverStrategy, ::Tuple)
+    throw(ArgumentError("Unknown solver based training strategy: $strategy. See [documentation](https://una-auxme.github.io/MeshGraphNets.jl/dev/strategies/) for available solver strategies."))
+end
+
+function validation_step(strategy::SolverStrategy, t::Tuple)
+    sim_interval = strategy.tstart:strategy.dt:strategy.tstop
+    data_interval = 1:length(sim_interval)
+
+    return _validation_step(t, sim_interval, data_interval)
+end
+
+
+
+"""
+    SingleShooting(tstart, dt, tstop, solver; sense = InterpolatingAdjoint(autojacvec = ZygoteVJP()), solargs...)
 
 The default solver based training that is normally used for NeuralODEs.
 Simulates the system from `tstart` to `tstop` and calculates the loss based on the difference between the prediction and the ground truth at the timesteps `tstart:dt:tstop`.
 
-# Arguments
+## Arguments
 - `tstart`: Start time of the simulation.
 - `dt`: Interval at which the simulation is saved.
 - `tstop`: Stop time of the simulation.
-- `solver`: The solver that is used for simulating the system.
+- `solver`: Solver that is used for simulating the system.
 
-# Keyword Arguments
-- `sense`: The sensitivity algorithm that is used for caluclating the sensitivities.
-- `plot_progress`: Whether the training progress is plotted or not.
+## Keyword Arguments
+- `sense = InterpolatingAdjoint(autojacvec = ZygoteVJP())`: The sensitivity algorithm that is used for caluclating the sensitivities.
 - `solargs`: Keyword arguments that are passed on to the solver.
 """
 struct SingleShooting <: SolverStrategy
@@ -135,23 +234,30 @@ struct SingleShooting <: SolverStrategy
     tstop::Float32
     solver::OrdinaryDiffEqAlgorithm
     sense::AbstractSensitivityAlgorithm
-    plot_progress::Bool
     solargs
 end
 
-function SingleShooting(tstart::Float32, dt::Float32, tstop::Float32, solver::OrdinaryDiffEqAlgorithm; sense::AbstractSensitivityAlgorithm = InterpolatingAdjoint(autojacvec = ZygoteVJP(), checkpointing = true), plot_progress = false, solargs...)
-    SingleShooting(tstart, dt, tstop, solver, sense, plot_progress, solargs)
+function SingleShooting(tstart::Float32, dt::Float32, tstop::Float32, solver::OrdinaryDiffEqAlgorithm; sense::AbstractSensitivityAlgorithm = InterpolatingAdjoint(autojacvec = ZygoteVJP(), checkpointing = true), solargs...)
+    SingleShooting(tstart, dt, tstop, solver, sense, solargs)
 end
 
 function train_loss(strategy::SingleShooting, t::Tuple)
 
-    prob, ps, u0, callback_solve, gt, val_mask = t
+    prob, ps, u0, callback_solve, gt, val_mask, n_norm, target_fields, target_dims = t
 
     sol = solve(remake(prob; p = ps), strategy.solver; u0 = u0, saveat = strategy.tstart:strategy.dt:strategy.tstop, tstops = strategy.tstart:strategy.dt:strategy.tstop, sensealg = strategy.sense, callback = callback_solve, strategy.solargs...)
 
     pred = typeof(gt) <: CuArray ? CuArray(sol) : Array(sol)
 
-    error = (gt[:, :, 1:size(pred, 3)] .- pred) .^ 2 |> cpu_device()
+    local gt_n
+    local pred_n
+
+    for i in eachindex(target_fields)
+        gt_n = vcat([n_norm[target_fields[i]](gt[sum(target_dims[1:i-1])+1:sum(target_dims[1:i]), :, 1:size(pred, 3)]) for i in eachindex(target_fields)]...)
+        pred_n = vcat([n_norm[target_fields[i]](pred[sum(target_dims[1:i-1])+1:sum(target_dims[1:i]), :, :]) for i in eachindex(target_fields)]...)
+    end
+
+    error = (gt_n[:, :, 1:size(pred, 3)] .- pred_n) .^ 2 |> cpu_device()
 
     err_buf = Zygote.Buffer(error)
 
@@ -166,8 +272,25 @@ function train_loss(strategy::SingleShooting, t::Tuple)
     return loss
 end
 
+
+
 """
-    MultipleShooting (Prototype, in development)
+    MultipleShooting(tstart, dt, tstop, solver, interval_size, continuity_term = 100; sense = InterpolatingAdjoint(autojacvec = ZygoteVJP(), checkpointing = true), solargs...)
+
+Similar to SingleShooting, but splits the trajectory into intervals that are solved independently and then combines them for loss calculation.
+Useful if the network tends to get stuck in a local minimum if SingleShooting is used.
+
+## Arguments
+- `tstart`: Start time of the simulation.
+- `dt`: Interval at which the simulation is saved.
+- `tstop`: Stop time of the simulation.
+- `solver`: Solver that is used for simulating the system.
+- `interval_size`: Size of the intervals (i.e. number of datapoints in one interval).
+- `continuity_term = 100`: Factor by which the error between points of concurrent intervals is multiplied.
+
+## Keyword Arguments
+- `sense = InterpolatingAdjoint(autojacvec = ZygoteVJP(), checkpointing = true)`:
+- `solargs`: Keyword arguments that are passed on to the solver.
 """
 struct MultipleShooting <: SolverStrategy
     tstart::Float32
@@ -177,16 +300,15 @@ struct MultipleShooting <: SolverStrategy
     sense::AbstractSensitivityAlgorithm
     interval_size::Integer                  # Number of observations in one interval
     continuity_term::Integer
-    plot_progress::Bool
     solargs
 end
 
-function MultipleShooting(tstart::Float32, dt::Float32, tstop::Float32, solver::OrdinaryDiffEqAlgorithm, interval_size, continuity_term = 100; sense::AbstractSensitivityAlgorithm = InterpolatingAdjoint(autojacvec = ZygoteVJP(), checkpointing = true), plot_progress = false, solargs...)
-    MultipleShooting(tstart, dt, tstop, solver, sense, interval_size, continuity_term, plot_progress, solargs)
+function MultipleShooting(tstart::Float32, dt::Float32, tstop::Float32, solver::OrdinaryDiffEqAlgorithm, interval_size, continuity_term = 100; sense::AbstractSensitivityAlgorithm = InterpolatingAdjoint(autojacvec = ZygoteVJP(), checkpointing = true), solargs...)
+    MultipleShooting(tstart, dt, tstop, solver, sense, interval_size, continuity_term, solargs)
 end
 
 function train_loss(strategy::MultipleShooting, t::Tuple)
-    prob, ps, _, callback_solve, gt, val_mask = t
+    prob, ps, _, callback_solve, gt, val_mask, _, _, _ = t
 
     tsteps = strategy.tstart:strategy.dt:strategy.tstop
     ranges = [i:min(length(tsteps), i + strategy.interval_size - 1) for i in 1:strategy.interval_size-1:length(tsteps)-1]
@@ -234,7 +356,9 @@ function train_loss(strategy::MultipleShooting, t::Tuple)
     return loss
 end
 
-
+#########################################################################
+# Abstract type and functions for collocation based training strategies #
+#########################################################################
 
 abstract type CollocationStrategy <: TrainingStrategy end
 
@@ -242,13 +366,9 @@ function get_delta(strategy::CollocationStrategy, trajectory_length::Integer)
     return strategy.window_size > 0 ? strategy.window_size : trajectory_length - 1
 end
 
-function init_train_step(strategy::CollocationStrategy, t::Tuple, ::Tuple)
+function init_train_step(::CollocationStrategy, t::Tuple, ::Tuple)
 
     mgn, data, meta, fields, target_fields, node_type, edge_features, senders, receivers, datapoint, mask, _ = t
-    
-    if strategy.eigeninformed
-        ;
-    end
 
     if typeof(meta["dt"]) <: AbstractArray
         target_quantities_change = vcat([mgn.o_norm[field]((data["target|" * field][:, :, datapoint] - data[field][:, :, datapoint]) / (meta["dt"][datapoint + 1] - meta["dt"][datapoint])) for field in target_fields]...)
@@ -267,58 +387,48 @@ function train_step(::CollocationStrategy, t::Tuple)
     return step!(mgn, graph, target_quantities_change, mask, mse_reduce)
 end
 
-function get_sim_interval(::CollocationStrategy, t::Tuple)
-    return t[2]["dt"][1]:t[2]["dt"][2]-t[2]["dt"][1]:t[2]["dt"][t[4]]
-end
-
-function validation_step(strategy::CollocationStrategy, t::Tuple)
-    sim_interval = get_sim_interval(strategy, t)
+function validation_step(::CollocationStrategy, t::Tuple)
+    sim_interval = t[2]["dt"][1]:t[2]["dt"][2]-t[2]["dt"][1]:t[2]["dt"][t[4]]
     data_interval = 1:t[4]
 
-    return validation_step(strategy, t, sim_interval, data_interval)
+    return _validation_step(t, sim_interval, data_interval)
 end
 
+
+
 """
-    Collocation(;window_size = 0, eigeninformed = false, plot_progress = false)
+    Collocation(; window_size = 0)
 
 Compares the prediction of the system with the derivative from the data (via finite differences).
 Useful for initial training of the system since it it faster than training with a solver.
 
-# Keyword Arguments
-- `window_size`: Number of steps from each trajectory (starting at the beginning) that are used for training. If the number is zero then the whole trajectory is used.
-- `eigeninformed`: Whether eigeninformed training is used at each training step or not. See [utils.jl](https://github.com/una-auxme/MeshGraphNets.jl/blob/main/src/utils.jl) for reference.
-- `plot_progress`: Whether the training progress is plotted or not.
-
+## Keyword Arguments
+- `window_size = 0`: Number of steps from each trajectory (starting at the beginning) that are used for training. If the number is zero then the whole trajectory is used.
 """
 struct Collocation <: CollocationStrategy
     window_size::Integer
-    eigeninformed::Bool
-    plot_progress::Bool
 end
 
-function Collocation(;window_size::Integer = 0, eigeninformed = false, plot_progress = false)
-    Collocation(window_size, eigeninformed, plot_progress)
+function Collocation(; window_size::Integer = 0)
+    Collocation(window_size)
 end
+
+
 
 """
-    RandomCollocation(;window_size = 0, eigeninformed = false, plot_progress = false)
+    RandomCollocation(; window_size = 0)
 
 Similar to Collocation, but timesteps are sampled randomly from the trajectory instead of sequential.
 
-# Keyword Arguments
-- `window_size`: Number of steps from each trajectory (starting at the beginning) that are used for training. If the number is zero then the whole trajectory is used.
-- `eigeninformed`: Whether eigeninformed training is used at each training step or not. See [utils.jl](https://github.com/una-auxme/MeshGraphNets.jl/blob/main/src/utils.jl) for reference.
-- `plot_progress`: Whether the training progress is plotted or not.
-
+## Keyword Arguments
+- `window_size = 0`: Number of steps from each trajectory (starting at the beginning) that are used for training. If the number is zero then the whole trajectory is used.
 """
 struct RandomCollocation <: CollocationStrategy
     window_size::Integer
-    eigeninformed::Bool
-    plot_progress::Bool
 end
 
-function RandomCollocation(;window_size::Integer = 0, eigeninformed = false, plot_progress = false)
-    RandomCollocation(window_size, eigeninformed, plot_progress)
+function RandomCollocation(; window_size::Integer = 0)
+    RandomCollocation(window_size)
 end
 
 function prepare_training(strategy::RandomCollocation)
@@ -332,10 +442,6 @@ function init_train_step(::RandomCollocation, t::Tuple, ta::Tuple)
     mgn, data, meta, fields, target_fields, node_type, edge_features, senders, receivers, datapoint, mask, _ = t
 
     sample = ta[1][datapoint]
-    
-    if strategy.eigeninformed
-        ;
-    end
 
     cur_quantities = vcat([data[field][:, :, sample] for field in target_fields]...)
     target_quantities = vcat([data["target|" * field][:, :, sample] for field in target_fields]...)
