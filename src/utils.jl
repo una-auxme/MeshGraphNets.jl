@@ -5,6 +5,17 @@
 
 import Printf: @sprintf
 
+"""
+    der_minmax(path)
+
+Calculates the minimum and maximum derivative for each target feature in the given dataset.
+
+## Arguments
+- `path`: Path to the dataset files.
+
+## Returns
+- Minimum and maximum derivative in training, validation and test set.
+"""
 function der_minmax(path)
     result = der_minmax(path, true)
     result_test = der_minmax(path, false)
@@ -20,6 +31,18 @@ function der_minmax(path)
     return result
 end
 
+"""
+    der_minmax(path, is_training)
+
+Calculates the minimum and maximum derivative for each target feature in the given part of the dataset.
+
+## Arguments
+- `path`: Path to the dataset files.
+- `is_training`: Determines for which dataset the calculation should be done. True for train and validation set, false for test set.
+
+## Returns
+- Minimum and maximum derivative in the specified part of the dataset.
+"""
 function der_minmax(path, is_training)
     dataset = load_dataset(path, is_training)
 
@@ -76,12 +99,12 @@ end
 
 Helper function to project a LinearIndex onto the given dimensions as a CartesianIndex.
 
-# Arguments
+## Arguments
 - `dims`: Dimensions to where the LinearIndex is projected onto.
-- `li`: The LinearIndex to convert.
+- `li`: LinearIndex to convert.
 
-# Returns
-- The converted CartesianIndex.
+## Returns
+- Converted CartesianIndex.
 """
 function li_to_ci(dims, li)
     ci = CartesianIndices(Tuple(dims))
@@ -93,12 +116,12 @@ end
 
 Helper function to project a CartesianIndex onto the given dimension as a LinearIndex.
 
-# Arguments
+## Arguments
 - `dims`: Dimensions to where the CartesianIndex is projected onto.
-- `li`: The CartesianIndex to convert.
+- `li`: CartesianIndex to convert.
 
-# Returns
-- The converted LinearIndex.
+## Returns
+- Converted LinearIndex.
 """
 function ci_to_li(dims, ci)
     li = LinearIndices(Tuple(dims))
@@ -110,30 +133,63 @@ end
 
 Helper function to proejct the given indices onto the given dimensions as a LinearIndex.
 
-# Arguments
+## Arguments
 - `dims`: Dimensions to where the LinearIndex is projected onto.
-- `idxs`: The indices to convert.
+- `idxs`: Indices to convert.
 
-# Returns
-- The converted LinearIndex.
+## Returns
+- Converted LinearIndex.
 """
 function dims_to_li(dims, idxs)
     li = LinearIndices(Tuple(dims))
     return li[idxs...]
 end
 
+"""
+    clear_line(move_up = true)
+
+Deletes the content of the current line in the terminal.
+
+## Arguments
+- `move_up`: Whether the cursor should be moved up one line before deleting.
+"""
 function clear_line(move_up = true)
     if move_up
-        print("\u1b[1F")
-        print("\u1b[2K")
-    else
-        print("\u1b[1G")
-        print("\u1b[2K")
+        print("\u1b[1F")    # Move cursor up one line and to start of line
+    end
+    print("\u1b[2K")    # Delete text in current line without moving cursor back
+    print("\u1b[1G")    # Move cursor to start of line
+end
+
+"""
+    clear_log(lines, move_up = true)
+
+Deletes the content of the given number of lines in the terminal.
+
+## Arguments
+- `lines`: Number of lines to be deleted.
+- `move_up`: Whether the cursor should be moved up one line before deleting.
+"""
+function clear_log(lines::Integer, move_up = true)
+    @assert lines > 0 "The number of lines in the terminal to be cleared must be greater than 0 : lines == $lines"
+    clear_line(move_up)
+    for _ in 1:lines
+        clear_line()
     end
 end
 
-function clear_log(lines::Integer, move_up = true)
-    for _ in 1:lines
-        clear_line(move_up)
-    end
-end
+####################################################################
+# Overwritten for differentiation over GraphNetwork and normaliser #
+####################################################################
+
+Zygote.accum(x::Base.RefValue{Any}, y::NamedTuple{(:model, :ps, :st, :e_norm, :n_norm, :o_norm)}) = Zygote.accum(x[], y)
+
+Zygote.accum(x::NamedTuple{(:model, :ps, :st, :e_norm, :n_norm, :o_norm)}, y::Base.RefValue{Any}) = Zygote.accum(x, y[])
+
+Zygote.accum(x::Base.RefValue{Any}, y::NamedTuple{(:data_min, :data_max, :target_min, :target_max)}) = Zygote.accum(x[], y)
+
+Base.:+(x::Base.RefValue{Any}, y::NamedTuple{(:model, :ps, :st, :e_norm, :n_norm, :o_norm)}) = Zygote.accum(x[], y)
+
+Base.:+(x::NamedTuple{(:model, :ps, :st, :e_norm, :n_norm, :o_norm)}, y::Base.RefValue{Any}) = Zygote.accum(x, y[])
+
+Base.:+(x::Base.RefValue{Any}, y::NamedTuple{(:data_min, :data_max, :target_min, :target_max)}) = Zygote.accum(x[], y)
