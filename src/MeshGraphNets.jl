@@ -225,9 +225,9 @@ function train_network(noise_stddevs, opt, ds_path, cp_path; kws...)
     print("Compiling code...")
     print("\u1b[1G")
 
-    train_mgn!(mgn, opt_state, dataset, noise_stddevs, df_train, df_valid, device, cp_path, args)
+    min_validation_loss = train_mgn!(mgn, opt_state, dataset, noise_stddevs, df_train, df_valid, device, cp_path, args)
 
-    return mgn
+    return mgn, min_validation_loss
 end
 
 """
@@ -356,6 +356,8 @@ function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise, df_tr
             cp_progress = 0
         end
     end
+
+    return min_validation_loss
 end
 
 """
