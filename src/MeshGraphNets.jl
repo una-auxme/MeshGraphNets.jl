@@ -169,7 +169,7 @@ Starts the training process with the given configuration.
 - `cell_idxs = [0]`: Indices of cells that are plotted during validation (if enabled).
 - `solver_valid = Tsit5()`: Which solver should be used for validation during training.
 - `solver_valid_dt = nothing`: If set, the solver for validation will use fixed timesteps.
-- `wandb_logger` = nothing: If set, a [Wandb.WandbLogger](@ref) will be used for logging the training.
+- `wandb_logger` = nothing: If set, a [Wandb](https://github.com/avik-pal/Wandb.jl) WandbLogger will be used for logging the training.
 
 ## Training Strategies
 - `Collocation`
