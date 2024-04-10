@@ -28,7 +28,8 @@ makedocs(sitename = "MeshGraphNets.jl",
                 "CylinderFlow" => "cylinder_flow.md"
             ],
             "Reference" => [
-                "Training Strategies" => "strategies.md"
+                "Training Strategies" => "strategies.md",
+                "Utilities" => "util.md",
                 "GraphNetCore.jl" => "graph_net_core.md"
             ]
         ]

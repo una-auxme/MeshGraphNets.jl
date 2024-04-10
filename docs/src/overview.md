@@ -16,4 +16,5 @@ References for training strategies and the core package [*GraphNetCore.jl*](http
 **Reference**
 
 - [Training Strategies](https://una-auxme.github.io/MeshGraphNets.jl/dev/strategies): Different training strategies that can be used for training.
+- [Utilities](https://una-auxme.github.io/MeshGraphNets.jl/dev/util): Utility functions for better user experience.
 - [GraphNetCore.jl](https://una-auxme.github.io/MeshGraphNets.jl/dev/graph_net_core): Documentation of the core package.

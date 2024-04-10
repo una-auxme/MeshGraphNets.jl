@@ -1,4 +1,4 @@
-# Training and evaluating the system
+# Training and Evaluating the System
 
 ```@docs
 train_network

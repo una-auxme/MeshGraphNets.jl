@@ -7,11 +7,10 @@ If you want to train your own network via *MeshGraphNets.jl* you have to provide
 Your files have to be placed inside the same folder so that *MeshGraphNets.jl* can find them. The structure of your files should for example look like this:
 
     - data
-        - datasets
-            - meta.json
-            - test.h5 (or test.tfrecord)
-            - train.h5 (or train.tfrecord)
-            - valid.h5 (or valid.tfrecord)
+      - meta.json
+      - test.h5 (or test.tfrecord)
+      - train.h5 (or train.tfrecord)
+      - valid.h5 (or valid.tfrecord)
 
 ## Files for Training, Evaluation and Testing
 
@@ -33,6 +32,8 @@ Your data files should have the following structure:
   - ...
 - ...
 
+The name of the trajectories can be chosen arbitrarily whereas the keys of the features have to match the ones provided in the metadata file (see [File for Metadata](#file-for-metadata-metajson)).
+
 ## File for Metadata (`meta.json`)
 
 Your metadata file also has to follow a defined structure. Since the metadata file for the [CylinderFlow](https://una-auxme.github.io/MeshGraphNets.jl/dev/cylinder_flow) example is handled differently, two files are explained in the following.
@@ -49,6 +50,11 @@ The default structure that you should use for your metadata is the following (ex
         5,
         3
     ],
+    "edges": {                                  # minimum and maximum value of edge features (optional)
+      "data_min": -0.2,
+      "data_max": 0.2
+    },
+    "no_edges_node_types": [],                  # node types that should not have a connection inside the mesh (optional)
     "feature_names": [                          # names of all features, mesh_pos and node_type are required
         "mesh_pos",
         "node_type",
@@ -78,7 +84,9 @@ The default structure that you should use for your metadata is the following (ex
             "key": "cl_mesh[%d,%d].velocity",
             "dim": 2,
             "type": "dynamic",
-            "dtype": "float32"
+            "dtype": "float32",
+            "output_min": -0.25,                # minimum value of the derivative of the feature (optional, required if "data_max" specified)
+            "output_max": 0.75                  # maximum value of the derivative of the feature (optional, required if "data_min" specified)
         }
     }
 }
@@ -86,13 +94,15 @@ The default structure that you should use for your metadata is the following (ex
 
 Here is a detailed description of each possible metadata:
 
-| Metadata            | Data type       | Description                                                                                    |
-|---------------------|-----------------|------------------------------------------------------------------------------------------------|
-| `"dt"`                | String          | each trajectory needs to have an entry for timesteps with the given key                      |
-| `"trajectory_length"` | Integer         | each trajectory needs to have the same length i.e. the same amount of steps                  |
-| `"dims"`              | Vector{Integer} | dimensions can be 1-, 2- or 3-dimensional                                                    |
-| `"feature_names"`     | Vector{String}  | list all features that are also used as an input of the network                              |
-| `"target_features"`   | Vector{String}  | list all features that the network should predict, they have to be part of `"feature_names"` |
+| Metadata                | Data type       | Description                                                                                    |
+|-------------------------|-----------------|------------------------------------------------------------------------------------------------|
+| `"dt"`                  | String          | each trajectory needs to have an entry for timesteps with the given key                        |
+| `"trajectory_length"`   | Integer         | each trajectory needs to have the same length i.e. the same amount of steps                    |
+| `"dims"`                | Vector{Integer} | dimensions can be 1-, 2- or 3-dimensional                                                      |
+| `"edges"`               | -               | if you specify `"data_min"` and `"data_max"`, offline normalization is used, online otherwise  |
+| `"no_edges_node_types"` | Vector{Integer} | if you want to exclude node types from the mesh, include them here
+| `"feature_names"`       | Vector{String}  | list all features that are also used as an input of the network                                |
+| `"target_features"`     | Vector{String}  | list all features that the network should predict, they have to be part of `"feature_names"`   |
 
 Each feature has its own metadata:
 
@@ -108,6 +118,8 @@ Each feature has its own metadata:
 | `"data_max"`       | Float   | see `"data_min"`                                                                                     |
 | `"target_min"`     | Float   | equivalent to `"data_min"` and `"data_max"`, specifies interval for normalization target             |
 | `"target_max"`     | Float   | see `"target_min"`                                                                                   |
+| `"output_min"`     | Float   | equivalent to `"data_min"` and `data_max`, specifices the interval of the derivative of the feature  |
+| `"output_max"`     | Float   | see `"output_min"`                                                                                   |
 
 The structure for the `HDF5` key has to follow one rule:
 
