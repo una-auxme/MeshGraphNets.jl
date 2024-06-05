@@ -222,7 +222,6 @@ function train_network(noise_stddevs, opt, ds_path, cp_path; kws...)
     
     clear_log(1, false)
     @info "Model built!"
-
     print("Compiling code...")
     print("\u1b[1G")
 
