@@ -68,7 +68,7 @@ Initializes the normalisers based on the given dataset and its metadata.
 - Dictionary of each node feature and its normaliser as key-value pair.
 - Dictionary of each output feature and its normaliser as key-value pair.
 """
-function calc_norms(dataset, device)
+function calc_norms(dataset, device, args::Args)
     quantities = 0
     n_norms = Dict{String, Union{NormaliserOffline, NormaliserOnline}}()
     o_norms = Dict{String, Union{NormaliserOffline, NormaliserOnline}}()
@@ -204,7 +204,7 @@ function train_network(noise_stddevs, opt, ds_path, cp_path; kws...)
 
     println("Building model...")
 
-    quantities, e_norms, n_norms, o_norms = calc_norms(dataset, device)
+    quantities, e_norms, n_norms, o_norms = calc_norms(dataset, device, args)
 
     dims = dataset.meta["dims"]
     outputs = 0
@@ -222,6 +222,7 @@ function train_network(noise_stddevs, opt, ds_path, cp_path; kws...)
     
     clear_log(1, false)
     @info "Model built!"
+
     print("Compiling code...")
     print("\u1b[1G")
 
@@ -407,7 +408,7 @@ function eval_network(ds_path, cp_path::String, out_path::String, solver = nothi
 
     println("Building model...")
 
-    quantities, e_norms, n_norms, o_norms = calc_norms(dataset, device)
+    quantities, e_norms, n_norms, o_norms = calc_norms(dataset, device, args)
 
     dims = dataset.meta["dims"]
     outputs = 0
