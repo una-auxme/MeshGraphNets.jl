@@ -9,3 +9,6 @@ Manifest.toml
 
 # Wandb files
 .CondaPkg/
+
+# VSCode files
+.vscode/
