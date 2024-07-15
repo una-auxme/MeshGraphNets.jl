@@ -19,7 +19,8 @@ FeatureGraph
 ## Normaliser
 
 ```@docs
-NormaliserOffline
+NormaliserOfflineMinMax
+NormaliserOfflineMeanStd
 NormaliserOnline
 inverse_data
 ```

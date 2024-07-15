@@ -10,7 +10,7 @@
 
 You can find the original implementation of MeshGraphNets in their GitHub repository [here](https://github.com/google-deepmind/deepmind-research/tree/master/meshgraphnets).
 
-## Overwiev
+## Overview
 
 [*MeshGraphNets.jl*](https://github.com/una-auxme/MeshGraphNets.jl) is designed to be part of the [SciML](https://sciml.ai/) ecosystem. The original framework was remodeled into a NeuralODE so that solvers from the [DifferentialEquations.jl](https://docs.sciml.ai/DiffEqDocs/stable/) can be used to evaluate the system.
 

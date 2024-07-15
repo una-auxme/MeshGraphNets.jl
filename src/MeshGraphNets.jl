@@ -13,8 +13,9 @@ using Optimisers
 using Wandb
 using Zygote
 
-import DifferentialEquations: ODEProblem, OrdinaryDiffEqAlgorithm, Tsit5
+import DifferentialEquations.OrdinaryDiffEq: OrdinaryDiffEqAlgorithm, Tsit5
 import ProgressMeter: Progress
+import SciMLBase: ODEProblem
 
 import Base: @kwdef
 import DifferentialEquations: solve, remake
@@ -29,7 +30,7 @@ include("dataset.jl")
 
 export SingleShooting, MultipleShooting, RandomCollocation, Collocation
 
-export train_network, eval_network, der_minmax
+export train_network, eval_network, der_minmax, data_meanstd
 
 @kwdef mutable struct Args
     mps::Integer = 15
@@ -68,13 +69,19 @@ Initializes the normalisers based on the given dataset and its metadata.
 - Dictionary of each node feature and its normaliser as key-value pair.
 - Dictionary of each output feature and its normaliser as key-value pair.
 """
-function calc_norms(dataset, device)
+function calc_norms(dataset, norm_steps, device)
     quantities = 0
     n_norms = Dict{String, Union{NormaliserOffline, NormaliserOnline}}()
     o_norms = Dict{String, Union{NormaliserOffline, NormaliserOnline}}()
 
     if haskey(dataset.meta, "edges")
-        e_norms = NormaliserOffline(Float32(dataset.meta["edges"]["data_min"]), Float32(dataset.meta["edges"]["data_max"]))
+        if haskey(dataset.meta["edges"], "data_min") && haskey(dataset.meta["edges"], "data_max")
+            e_norms = NormaliserOfflineMinMax(Float32(dataset.meta["edges"]["data_min"]), Float32(dataset.meta["edges"]["data_max"]))
+        elseif haskey(dataset.meta["edges"], "data_mean") && haskey(dataset.meta["edges"], "data_std")
+            e_norms = NormaliserOfflineMeanStd(Float32(dataset.meta["edges"]["data_mean"]), Float32(dataset.meta["edges"]["data_std"]))
+        else
+            throw(KeyError("Keyword \"edges\" was specified in metadata, but no normalization data was provided."))
+        end
     else
         e_norms = NormaliserOnline(length(dataset.meta["dims"]) + 1, device)
     end
@@ -85,22 +92,22 @@ function calc_norms(dataset, device)
         end
         if getfield(Base, Symbol(uppercasefirst(dataset.meta["features"][feature]["dtype"]))) == Bool
             quantities += 1
-            n_norms[feature] = NormaliserOffline(0.0f0, 1.0f0)
+            n_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0)
             if feature in dataset.meta["target_features"]
-                o_norms[feature] = NormaliserOffline(0.0f0, 1.0f0)
+                o_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0)
             end
         elseif getfield(Base, Symbol(uppercasefirst(dataset.meta["features"][feature]["dtype"]))) == Int32
             if haskey(dataset.meta["features"][feature], "onehot") && dataset.meta["features"][feature]["onehot"]
                 quantities += dataset.meta["features"][feature]["data_max"] - dataset.meta["features"][feature]["data_min"] + 1
                 if haskey(dataset.meta["features"][feature], "target_min") && haskey(dataset.meta["features"][feature], "target_max")
-                    n_norms[feature] = NormaliserOffline(0.0f0, 1.0f0, Float32(dataset.meta["features"][feature]["target_min"]), Float32(dataset.meta["features"][feature]["target_max"]))
+                    n_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0, Float32(dataset.meta["features"][feature]["target_min"]), Float32(dataset.meta["features"][feature]["target_max"]))
                     if feature in dataset.meta["target_features"]
-                        o_norms[feature] = NormaliserOffline(0.0f0, 1.0f0, Float32(dataset.meta["features"][feature]["target_min"]), Float32(dataset.meta["features"][feature]["target_max"]))
+                        o_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0, Float32(dataset.meta["features"][feature]["target_min"]), Float32(dataset.meta["features"][feature]["target_max"]))
                     end
                 else
-                    n_norms[feature] = NormaliserOffline(0.0f0, 1.0f0)
+                    n_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0)
                     if feature in dataset.meta["target_features"]
-                        o_norms[feature] = NormaliserOffline(0.0f0, 1.0f0)
+                        o_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0)
                     end
                 end
             else
@@ -110,28 +117,37 @@ function calc_norms(dataset, device)
             quantities += dataset.meta["features"][feature]["dim"]
             if haskey(dataset.meta["features"][feature], "data_min") && haskey(dataset.meta["features"][feature], "data_max")
                 if haskey(dataset.meta["features"][feature], "target_min") && haskey(dataset.meta["features"][feature], "target_max")
-                    n_norms[feature] = NormaliserOffline(Float32(dataset.meta["features"][feature]["data_min"]), Float32(dataset.meta["features"][feature]["data_max"]), Float32(dataset.meta["features"][feature]["target_min"]), Float32(dataset.meta["features"][feature]["target_max"]))
+                    n_norms[feature] = NormaliserOfflineMinMax(Float32(dataset.meta["features"][feature]["data_min"]), Float32(dataset.meta["features"][feature]["data_max"]), Float32(dataset.meta["features"][feature]["target_min"]), Float32(dataset.meta["features"][feature]["target_max"]))
                     if feature in dataset.meta["target_features"]
                         if haskey(dataset.meta["features"][feature], "output_min") && haskey(dataset.meta["features"][feature], "output_max")
-                            o_norms[feature] = NormaliserOffline(Float32(dataset.meta["features"][feature]["output_min"]), Float32(dataset.meta["features"][feature]["output_max"]), Float32(dataset.meta["features"][feature]["target_min"]), Float32(dataset.meta["features"][feature]["target_max"]))
+                            o_norms[feature] = NormaliserOfflineMinMax(Float32(dataset.meta["features"][feature]["output_min"]), Float32(dataset.meta["features"][feature]["output_max"]), Float32(dataset.meta["features"][feature]["target_min"]), Float32(dataset.meta["features"][feature]["target_max"]))
                         else
-                            o_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(args.norm_steps))
+                            o_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(norm_steps))
                         end
                     end
                 else
-                    n_norms[feature] = NormaliserOffline(Float32(dataset.meta["features"][feature]["data_min"]), Float32(dataset.meta["features"][feature]["data_max"]))
+                    n_norms[feature] = NormaliserOfflineMinMax(Float32(dataset.meta["features"][feature]["data_min"]), Float32(dataset.meta["features"][feature]["data_max"]))
                     if feature in dataset.meta["target_features"]
                         if haskey(dataset.meta["features"][feature], "output_min") && haskey(dataset.meta["features"][feature], "output_max")
-                            o_norms[feature] = NormaliserOffline(Float32(dataset.meta["features"][feature]["output_min"]), Float32(dataset.meta["features"][feature]["output_max"]))
+                            o_norms[feature] = NormaliserOfflineMinMax(Float32(dataset.meta["features"][feature]["output_min"]), Float32(dataset.meta["features"][feature]["output_max"]))
                         else
-                            o_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(args.norm_steps))
+                            o_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(norm_steps))
                         end
                     end
                 end
-            else
-                n_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(args.norm_steps))
+            elseif haskey(dataset.meta["features"][feature], "data_mean") && haskey(dataset.meta["features"][feature], "data_std")
+                n_norms[feature] = NormaliserOfflineMeanStd(Float32(dataset.meta["features"][feature]["data_mean"]), Float32(dataset.meta["features"][feature]["data_std"]))
                 if feature in dataset.meta["target_features"]
-                    o_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(args.norm_steps))
+                    if haskey(dataset.meta["features"][feature], "output_min") && haskey(dataset.meta["features"][feature], "output_max")
+                        o_norms[feature] = NormaliserOfflineMeanStd(Float32(dataset.meta["features"][feature]["output_mean"]), Float32(dataset.meta["features"][feature]["output_std"]))
+                    else
+                        o_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(norm_steps))
+                    end
+                end
+            else
+                n_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(norm_steps))
+                if feature in dataset.meta["target_features"]
+                    o_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(norm_steps))
                 end
             end
         end
@@ -204,7 +220,7 @@ function train_network(noise_stddevs, opt, ds_path, cp_path; kws...)
 
     println("Building model...")
 
-    quantities, e_norms, n_norms, o_norms = calc_norms(dataset, device)
+    quantities, e_norms, n_norms, o_norms = calc_norms(dataset, args.norm_steps, device)
 
     dims = dataset.meta["dims"]
     outputs = 0
@@ -409,7 +425,7 @@ function eval_network(ds_path, cp_path::String, out_path::String, solver = nothi
 
     println("Building model...")
 
-    quantities, e_norms, n_norms, o_norms = calc_norms(dataset, device)
+    quantities, e_norms, n_norms, o_norms = calc_norms(dataset, args.norm_steps, device)
 
     dims = dataset.meta["dims"]
     outputs = 0
