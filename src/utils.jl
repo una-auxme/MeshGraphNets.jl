@@ -95,6 +95,17 @@ function der_minmax(path, is_training)
     return result
 end
 
+"""
+    data_meanstd(path)
+
+Calculates the mean and standard deviation for each feature in the given dataset.
+
+## Arguments
+- `path`: Path to the dataset files.
+
+## Returns
+- Mean and standard deviation in training, validation and test set.
+"""
 function data_meanstd(path)
     result = data_meanstd(path, true)
     result_test = data_meanstd(path, false)
@@ -111,6 +122,18 @@ function data_meanstd(path)
     return meanstd_dict
 end
 
+"""
+    data_meanstd(path, is_training)
+
+Calculates the mean and standard deviation for each feature in the given part of the dataset.
+
+## Arguments
+- `path`: Path to the dataset files.
+- `is_training`: Determines for which dataset the calculation should be done. True for train and validation set, false for test set.
+
+## Returns
+- Mean and standard deviation in the specified part of the dataset.
+"""
 function data_meanstd(path, is_training)
     dataset = load_dataset(path, is_training)
 
