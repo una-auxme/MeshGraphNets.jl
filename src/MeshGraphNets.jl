@@ -13,8 +13,9 @@ using Optimisers
 using Wandb
 using Zygote
 
-import DifferentialEquations: ODEProblem, OrdinaryDiffEqAlgorithm, Tsit5
+import DifferentialEquations.OrdinaryDiffEq: OrdinaryDiffEqAlgorithm, Tsit5
 import ProgressMeter: Progress
+import SciMLBase: ODEProblem
 
 import Base: @kwdef
 import DifferentialEquations: solve, remake
