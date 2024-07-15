@@ -4,6 +4,7 @@
 #
 
 import Printf: @sprintf
+import Statistics: mean, stdm
 
 """
     der_minmax(path)
@@ -92,6 +93,91 @@ function der_minmax(path, is_training)
     end
 
     return result
+end
+
+function data_meanstd(path)
+    result = data_meanstd(path, true)
+    result_test = data_meanstd(path, false)
+
+    meanstd_dict = Dict{String, Any}()
+
+    for k in keys(result)
+        result[k] = cat(result[k], result_test[k]; dims = 3)
+        m = mean(result[k])
+        s = stdm(result[k], m)
+        meanstd_dict[k] = (m, s)
+    end
+    
+    return meanstd_dict
+end
+
+function data_meanstd(path, is_training)
+    dataset = load_dataset(path, is_training)
+
+    features = dataset.meta["feature_names"]
+    target_features = dataset.meta["target_features"]
+
+    result = Dict(f => [0.0f0, 0.0f0] for f in features)
+    for tf in target_features
+        result["target|$tf"] = [0.0f0, 0.0f0]
+    end
+
+    n_traj = dataset.meta["n_trajectories"]
+
+    function isnumber(meta, f)
+        return getfield(Base, Symbol(uppercasefirst(meta["features"][f]["dtype"]))) == Int32 || getfield(Base, Symbol(uppercasefirst(meta["features"][f]["dtype"]))) == Float32
+    end
+
+    result_arrays = Dict()
+    for f in features
+        if isnumber(dataset.meta, f)
+            result_arrays[f] = zeros(Float32, dataset.meta["features"][f]["dim"], prod(dataset.meta["dims"]), 0)
+        end
+    end
+    for tf in target_features
+        if isnumber(dataset.meta, tf)
+            result_arrays["target|$tf"] = zeros(Float32, dataset.meta["features"][tf]["dim"], prod(dataset.meta["dims"]), 0)
+        end
+    end
+    
+    for _ in 1:n_traj
+        data, meta = next_trajectory!(dataset, cpu_device(); types_noisy = [], noise_stddevs = [], ts = nothing)
+        
+        for f in features
+            if isnumber(meta, f)
+                result_arrays[f] = cat(result_arrays[f], data[f]; dims = 3)
+            end
+        end
+        
+        dt =  Float32(meta["dt"][2] -  meta["dt"][1])
+        for tf in target_features
+            if isnumber(meta, tf)
+                result_arrays["target|$tf"] = cat(result_arrays["target|$tf"], (data[tf][:, :, 2:end] - data[tf][:, :, 1:end-1]) ./ dt; dims = 3)
+            end
+        end
+    end
+
+    if is_training
+        n_traj_valid = dataset.meta["n_trajectories_valid"]
+        for _ in 1:n_traj_valid
+            data, meta = next_trajectory!(dataset, cpu_device(); types_noisy = [], noise_stddevs = [], ts = nothing, is_training = false)
+            
+            for f in features
+                if isnumber(meta, f)
+                    result_arrays[f] = cat(result_arrays[f], data[f]; dims = 3)
+                end
+            end
+            
+            dt =  Float32(meta["dt"][2] -  meta["dt"][1])
+            for tf in target_features
+                if isnumber(meta, tf)
+                   result_arrays["target|$tf"] = cat(result_arrays["target|$tf"], (data[tf][:, :, 2:end] - data[tf][:, :, 1:end-1]) ./ dt; dims = 3)
+                end
+            end
+        end
+    end
+
+    return result_arrays
 end
 
 """
