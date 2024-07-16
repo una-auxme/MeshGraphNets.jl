@@ -35,7 +35,7 @@ Returns the delta between samples in the training data.
 
 ## Arguments
 - `strategy`: Used training strategy.
-- Trajectory length (used for collocation strategies).
+- Trajectory length (used for derivative based strategies).
 
 ## Returns
 - Delta between samples in the training data.
@@ -213,7 +213,7 @@ end
 
 
 """
-    SingleShooting(tstart, dt, tstop, solver; sense = InterpolatingAdjoint(autojacvec = ZygoteVJP()), solargs...)
+    SolverTraining(tstart, dt, tstop, solver; sense = InterpolatingAdjoint(autojacvec = ZygoteVJP()), solargs...)
 
 The default solver based training that is normally used for NeuralODEs.
 Simulates the system from `tstart` to `tstop` and calculates the loss based on the difference between the prediction and the ground truth at the timesteps `tstart:dt:tstop`.
@@ -228,7 +228,7 @@ Simulates the system from `tstart` to `tstop` and calculates the loss based on t
 - `sense = InterpolatingAdjoint(autojacvec = ZygoteVJP())`: The sensitivity algorithm that is used for caluclating the sensitivities.
 - `solargs`: Keyword arguments that are passed on to the solver.
 """
-struct SingleShooting <: SolverStrategy
+struct SolverTraining <: SolverStrategy
     tstart::Float32
     dt::Float32
     tstop::Float32
@@ -237,11 +237,11 @@ struct SingleShooting <: SolverStrategy
     solargs
 end
 
-function SingleShooting(tstart::Float32, dt::Float32, tstop::Float32, solver::OrdinaryDiffEqAlgorithm; sense::AbstractSensitivityAlgorithm = InterpolatingAdjoint(autojacvec = ZygoteVJP(), checkpointing = true), solargs...)
-    SingleShooting(tstart, dt, tstop, solver, sense, solargs)
+function SolverTraining(tstart::Float32, dt::Float32, tstop::Float32, solver::OrdinaryDiffEqAlgorithm; sense::AbstractSensitivityAlgorithm = InterpolatingAdjoint(autojacvec = ZygoteVJP(), checkpointing = true), solargs...)
+    SolverTraining(tstart, dt, tstop, solver, sense, solargs)
 end
 
-function train_loss(strategy::SingleShooting, t::Tuple)
+function train_loss(strategy::SolverTraining, t::Tuple)
 
     prob, ps, u0, callback_solve, gt, val_mask, n_norm, target_fields, target_dims = t
 
@@ -277,8 +277,8 @@ end
 """
     MultipleShooting(tstart, dt, tstop, solver, interval_size, continuity_term = 100; sense = InterpolatingAdjoint(autojacvec = ZygoteVJP(), checkpointing = true), solargs...)
 
-Similar to SingleShooting, but splits the trajectory into intervals that are solved independently and then combines them for loss calculation.
-Useful if the network tends to get stuck in a local minimum if SingleShooting is used.
+Similar to SolverTraining, but splits the trajectory into intervals that are solved independently and then combines them for loss calculation.
+Useful if the network tends to get stuck in a local minimum if SolverTraining is used.
 
 ## Arguments
 - `tstart`: Start time of the simulation.
@@ -356,17 +356,17 @@ function train_loss(strategy::MultipleShooting, t::Tuple)
     return loss
 end
 
-#########################################################################
-# Abstract type and functions for collocation based training strategies #
-#########################################################################
+########################################################################
+# Abstract type and functions for derivative based training strategies #
+########################################################################
 
-abstract type CollocationStrategy <: TrainingStrategy end
+abstract type DerivativeStrategy <: TrainingStrategy end
 
-function get_delta(strategy::CollocationStrategy, trajectory_length::Integer)
+function get_delta(strategy::DerivativeStrategy, trajectory_length::Integer)
     return strategy.window_size > 0 ? strategy.window_size : trajectory_length - 1
 end
 
-function init_train_step(::CollocationStrategy, t::Tuple, ::Tuple)
+function init_train_step(::DerivativeStrategy, t::Tuple, ::Tuple)
 
     mgn, data, meta, fields, target_fields, node_type, edge_features, senders, receivers, datapoint, mask, _ = t
 
@@ -380,14 +380,14 @@ function init_train_step(::CollocationStrategy, t::Tuple, ::Tuple)
     return (mgn, graph, target_quantities_change, mask)
 end
 
-function train_step(::CollocationStrategy, t::Tuple)
+function train_step(::DerivativeStrategy, t::Tuple)
 
     mgn, graph, target_quantities_change, mask = t
 
     return step!(mgn, graph, target_quantities_change, mask, mse_reduce)
 end
 
-function validation_step(::CollocationStrategy, t::Tuple)
+function validation_step(::DerivativeStrategy, t::Tuple)
     sim_interval = t[2]["dt"][1]:t[2]["dt"][2]-t[2]["dt"][1]:t[2]["dt"][t[4]]
     data_interval = 1:t[4]
 
@@ -397,7 +397,7 @@ end
 
 
 """
-    Collocation(; window_size = 0)
+    DerivativeTraining(; window_size = 0)
 
 Compares the prediction of the system with the derivative from the data (via finite differences).
 Useful for initial training of the system since it it faster than training with a solver.
@@ -405,10 +405,10 @@ Useful for initial training of the system since it it faster than training with 
 ## Keyword Arguments
 - `window_size = 0`: Number of steps from each trajectory (starting at the beginning) that are used for training. If the number is zero then the whole trajectory is used.
 """
-struct Collocation <: CollocationStrategy
+struct DerivativeTraining <: DerivativeStrategy
     window_size::Integer
     random::Bool
 end
-function Collocation(;window_size::Integer = 0, random = true)
-    Collocation(window_size, random)
+function DerivativeTraining(;window_size::Integer = 0, random = true)
+    DerivativeTraining(window_size, random)
 end

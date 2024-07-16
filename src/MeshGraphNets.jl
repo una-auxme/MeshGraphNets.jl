@@ -28,7 +28,7 @@ include("graph.jl")
 include("solve.jl")
 include("dataset.jl")
 
-export SingleShooting, MultipleShooting, RandomCollocation, Collocation
+export SolverTraining, MultipleShooting, DerivativeTraining
 
 export train_network, eval_network, der_minmax, data_meanstd
 
@@ -44,9 +44,9 @@ export train_network, eval_network, der_minmax, data_meanstd
     max_norm_steps::Integer = 10f6
     types_updated::Vector{Integer} = [0, 5]
     types_noisy::Vector{Integer} = [0]
-    training_strategy::TrainingStrategy = Collocation()
+    training_strategy::TrainingStrategy = DerivativeTraining()
     use_cuda::Bool = true
-    gpu_device::Integer = CUDA.device()
+    gpu_device::CuDevice = CUDA.device()
     cell_idxs::Vector{Integer} = [0]
     num_rollouts::Integer = 10
     use_valid::Bool = true
@@ -182,7 +182,7 @@ Starts the training process with the given configuration.
 - `max_norm_steps = 10f6`: Number of steps after which no more normalization stats are collected. 
 - `types_updated = [0, 5]`: Array containing node types which are updated after each step.
 - `types_noisy = [0]`: Array containing node types which noise is added to.
-- `training_strategy = Collocation()`: Methods used for training. See [documentation](https://una-auxme.github.io/MeshGraphNets.jl/dev/strategies/).
+- `training_strategy = DerivativeTraining()`: Methods used for training. See [documentation](https://una-auxme.github.io/MeshGraphNets.jl/dev/strategies/).
 - `use_cuda = true`: Whether a GPU is used for training or not (if available). Currently only CUDA GPUs are supported.
 - `gpu_device = CUDA.device()`: Current CUDA device (aka GPU). See *nvidia-smi* for reference.
 - `cell_idxs = [0]`: Indices of cells that are plotted during validation (if enabled).
@@ -192,9 +192,8 @@ Starts the training process with the given configuration.
 - `reset_valid = false`: If set, the previous minimal validation loss will be overwritten.
 
 ## Training Strategies
-- `Collocation`
-- `RandomCollocation`
-- `SingleShooting`
+- `DerivativeTraining`
+- `SolverTraining`
 - `MultipleShooting`
 
 See [CylinderFlow Example](https://una-auxme.github.io/MeshGraphNets.jl/dev/cylinder_flow) for reference.
@@ -520,7 +519,7 @@ function eval_network!(solver, mgn::GraphNetwork, dataset::Dataset, device::Func
         errors[(ti, "error")] = cpu_device()(error[:, 1, :])
     end
     
-    eval_path = joinpath(out_path, isnothing(solver) ? "collocation" : lowercase("$(nameof(typeof(solver)))"))
+    eval_path = joinpath(out_path, isnothing(solver) ? "derivative_training" : lowercase("$(nameof(typeof(solver)))"))
     mkpath(eval_path)
     h5open(joinpath(eval_path, "trajectories.h5"), "w") do f
         for i in 1:maximum(getfield.(keys(traj_ops), 1))

@@ -423,7 +423,7 @@ end
 """
     add_targets!(data, fields, device)
 
-Shifts the datapoints beginning from second index back in order to use them as ground truth data (used for collocation strategies).
+Shifts the datapoints beginning from second index back in order to use them as ground truth data (used for derivative based strategies).
 
 ## Arguments
 - `data`: Data from the dataset containing one trajectory.
@@ -455,7 +455,7 @@ end
 """
     preprocess!(data, noise_fields, noise_stddevs, types_noisy, ts, device)
 
-Adds noise to the given features and shuffles the datapoints if a collocation strategy is used.
+Adds noise to the given features and shuffles the datapoints if a derivative based strategy is used.
 
 ## Arguments
 - `data`: Data from the dataset containing one trajectory.
@@ -485,8 +485,7 @@ function preprocess!(data, noise_fields, noise_stddevs, types_noisy, ts, device)
         if key == "edges" || length(data[key]) == 1 || size(data[key])[end] == 1
             continue
         end
-        if typeof(ts) <: CollocationStrategy && ts.random
-            
+        if typeof(ts) <: DerivativeStrategy && ts.random
             data[key] = data[key][repeat([:], ndims(data[key])-1)..., shuffle(rng, ts.window_size == 0 ? collect(1:end) : collect(1:ts.window_size))]
         end
         seed!(rng, seed)
@@ -591,7 +590,7 @@ end
 """
     prepare_trajectory!(data, meta, device; types_noisy, noise_stddevs, ts)
 
-Transfers the data to the given device and configures the data if a collocation strategy is used.
+Transfers the data to the given device and configures the data if a derivative based strategy is used.
 
 ## Arguments
 - `data`: Data from the dataset containing one trajectory.
@@ -608,7 +607,7 @@ Transfers the data to the given device and configures the data if a collocation 
 - Metadata of the dataset.
 """
 function prepare_trajectory!(data, meta, device::Function; types_noisy, noise_stddevs, ts)
-    if !isnothing(ts) && (typeof(ts) <: CollocationStrategy)
+    if !isnothing(ts) && (typeof(ts) <: DerivativeStrategy)
         add_targets!(data, meta["target_features"], device)
         preprocess!(data, meta["target_features"], noise_stddevs, types_noisy, ts, device)
         for field in meta["feature_names"]

@@ -1,7 +1,7 @@
 # Training Strategies
 
 ```@docs
-Collocation
-SingleShooting
+DerivativeTraining
+SolverTraining
 MultipleShooting
 ```

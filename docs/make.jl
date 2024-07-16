@@ -45,4 +45,4 @@ function deployConfig()
     return GitHubActions(github_repository, github_event_name, github_ref)
 end
 
-deploydocs(repo = "github.com/una-auxme/MeshGraphNets.jl.git", devbranch = "main", deploy_config = deployConfig())
+deploydocs(repo = "github.com/una-auxme/MeshGraphNets.jl.git", devbranch = "main", versions = ["dev" => "dev", "v#.#"], deploy_config = deployConfig())
