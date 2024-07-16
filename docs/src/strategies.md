@@ -2,7 +2,6 @@
 
 ```@docs
 Collocation
-RandomCollocation
 SingleShooting
 MultipleShooting
 ```
