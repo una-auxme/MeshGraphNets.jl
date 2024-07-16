@@ -46,7 +46,7 @@ export train_network, eval_network, der_minmax, data_meanstd
     types_noisy::Vector{Integer} = [0]
     training_strategy::TrainingStrategy = DerivativeTraining()
     use_cuda::Bool = true
-    gpu_device::Integer = CUDA.device()
+    gpu_device::CuDevice = CUDA.device()
     cell_idxs::Vector{Integer} = [0]
     num_rollouts::Integer = 10
     use_valid::Bool = true
