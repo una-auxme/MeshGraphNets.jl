@@ -262,19 +262,15 @@ Initializes the network and performs the training loop.
 - `cp_path`: Path where checkpoints are saved.
 - `args`: Keyword arguments for configuring the training.
 """
-function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise, df_train, df_valid, device::Function, cp_path, args::Args)
+function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise, df_train, df_valid, device, cp_path, args::Args)
     checkpoint = length(df_train.step) > 0 ? last(df_train.step) : 0
     step = checkpoint
     cp_progress = 0
     min_validation_loss = length(df_valid.loss) > 0 ? last(df_valid.loss) : Inf32
     last_validation_loss = min_validation_loss
 
-    if isnothing(args.wandb_logger)
-        pr = Progress(args.epochs*args.steps; desc = "Training progress: ", dt=1.0, barlen=50, start=checkpoint, showspeed=true)
-        update!(pr)
-    else
-        pr = nothing
-    end
+    pr = Progress(args.epochs*args.steps; desc = "Training progress: ", dt=1.0, barlen=50, start=checkpoint, showspeed=true)
+    update!(pr)
 
     local tmp_loss = 0.0f0
     local avg_loss = 0.0f0
@@ -306,15 +302,12 @@ function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise, df_tr
                     opt_state, ps = Optimisers.update(opt_state, mgn.ps, gs[i])
                     mgn.ps = ps
                 end
-                if isnothing(args.wandb_logger)
-                    next!(pr, showvalues=[(:train_step,"$(step + datapoint)/$(args.epochs*args.steps)"), (:train_loss, sum(losses)), (:checkpoint, length(df_train.step) > 0 ? last(df_train.step) : 0), (:data_interval, delta == 1 ? "1:end" : 1:delta), (:min_validation_loss, min_validation_loss), (:last_validation_loss, last_validation_loss)])
-                else
-                    Wandb.log(args.wandb_logger, Dict("train_loss" => sum(losses)))
+                next!(pr, showvalues=[(:train_step,"$(step + datapoint)/$(args.epochs*args.steps)"), (:train_loss, sum(losses)), (:checkpoint, length(df_train.step) > 0 ? last(df_train.step) : 0), (:data_interval, delta == 1 ? "1:end" : 1:delta), (:min_validation_loss, min_validation_loss), (:last_validation_loss, last_validation_loss)])
+                if !isnothing(args.wandb_logger)
+                    Wandb.log(args.wandb_logger, Dict("train_loss" => l))
                 end
             else
-                if isnothing(args.wandb_logger)
-                    next!(pr, showvalues=[(:step,"$(step + datapoint)/$(args.epochs*args.steps)"), (:loss,"acc norm stats..."), (:checkpoint, 0)])
-                end
+                next!(pr, showvalues=[(:step,"$(step + datapoint)/$(args.epochs*args.steps)"), (:loss,"acc norm stats..."), (:checkpoint, 0)])
             end
         end
 
@@ -329,20 +322,21 @@ function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise, df_tr
             valid_error = 0.0f0
             gt = nothing
             prediction = nothing
-            pr_valid = Progress(meta["n_trajectories_valid"]; desc = "Validation progress: ", barlen = 50)
+            pr_valid = Progress(dataset.meta["n_trajectories_valid"]; desc = "Validation progress: ", barlen = 50)
 
-            for i in 1:meta["n_trajectories_valid"]
+            for i in 1:dataset.meta["n_trajectories_valid"]
                 data_valid, meta_valid = next_trajectory!(dataset, device; types_noisy = args.types_noisy, is_training = false)
                 
-                node_type_valid, senders_valid, receivers_valid, edge_features_valid = create_base_graph(data_valid, meta["features"]["node_type"]["data_max"], meta["features"]["node_type"]["data_min"], device)
+                mask = Int32.(findall(x -> x in args.types_updated, data_valid["node_type"][1, :, 1])) |> device
+                node_type_valid, senders_valid, receivers_valid, edge_features_valid = create_base_graph(data_valid, meta_valid["features"]["node_type"]["data_max"], meta_valid["features"]["node_type"]["data_min"], device)
                 val_mask_valid = Float32.(map(x -> x in args.types_updated, data_valid["node_type"][:, :, 1]))
                 val_mask_valid = repeat(val_mask_valid, sum(size(data_valid[field], 1) for field in meta_valid["target_features"]), 1) |> device
 
-                inflow_mask_valid = repeat(data["node_type"][:, :, 1] .== 1, sum(size(data[field], 1) for field in meta["target_features"]), 1) |> device
+                inflow_mask_valid = repeat(data_valid["node_type"][:, :, 1] .== 1, sum(size(data_valid[field], 1) for field in meta_valid["target_features"]), 1) |> device
 
                 ve, g, p = validation_step(args.training_strategy, (
                     mgn, data_valid, meta_valid, delta, args.solver_valid, args.solver_valid_dt, fields, node_type_valid,
-                    edge_features_valid, senders_valid, receivers_valid, mask, val_mask_valid, inflow_mask_valid, data
+                    edge_features_valid, senders_valid, receivers_valid, mask, val_mask_valid, inflow_mask_valid, data_valid
                 ))
                 
                 valid_error += ve
@@ -351,19 +345,19 @@ function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise, df_tr
                     prediction = p
                 end
                 
-                next!(pr_valid, showvalues = [(:trajectory, "$i/$(meta["n_trajectories_valid"])"), (:valid_loss, "$((valid_error + ve) / i)")])
+                next!(pr_valid, showvalues = [(:trajectory, "$i/$(meta_valid["n_trajectories_valid"])"), (:valid_loss, "$((valid_error + ve) / i)")])
             end
 
             if !isnothing(args.wandb_logger)
-                Wandb.log(args.wandb_logger, Dict("validation_loss" => valid_error / meta["n_trajectories_valid"]))
+                Wandb.log(args.wandb_logger, Dict("validation_loss" => valid_error / dataset.meta["n_trajectories_valid"]))
             end
 
-            if valid_error / meta["n_trajectories_valid"] < min_validation_loss
-                save!(mgn, opt_state, df_train, df_valid, step, valid_error / meta["n_trajectories_valid"], joinpath(cp_path, "valid"); is_training = false)
-                min_validation_loss = valid_error / meta["n_trajectories_valid"]
+            if valid_error / dataset.meta["n_trajectories_valid"] < min_validation_loss
+                save!(mgn, opt_state, df_train, df_valid, step, valid_error / dataset.meta["n_trajectories_valid"], joinpath(cp_path, "valid"); is_training = false)
+                min_validation_loss = valid_error / dataset.meta["n_trajectories_valid"]
                 cp_progress = args.checkpoint
             end
-            last_validation_loss = valid_error / meta["n_trajectories_valid"]
+            last_validation_loss = valid_error / dataset.meta["n_trajectories_valid"]
         end
 
         if cp_progress >= args.checkpoint
@@ -499,7 +493,6 @@ function eval_network!(solver, mgn::GraphNetwork, dataset::Dataset, device::Func
         error = mean((prediction - vcat([data[field][:, :, 1:length(saves)] for field in meta["target_features"]]...)) .^ 2; dims = 2)
         timesteps[(ti, "timesteps")] = sol_t
 
-        clear_log(1)
         @info "Rollout trajectory $ti completed!"
 
         println("MSE of state prediction:")

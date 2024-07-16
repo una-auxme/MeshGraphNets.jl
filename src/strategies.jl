@@ -303,7 +303,7 @@ struct MultipleShooting <: SolverStrategy
     solargs
 end
 
-function MultipleShooting(tstart::Float32, dt::Float32, tstop::Float32, solver::OrdinaryDiffEqAlgorithm, interval_size, continuity_term = 100; sense::AbstractSensitivityAlgorithm = InterpolatingAdjoint(autojacvec = ZygoteVJP(), checkpointing = true), solargs...)
+function MultipleShooting(tstart::Float32, dt::Float32, tstop::Float32, solver::OrdinaryDiffEqAlgorithm; sense::AbstractSensitivityAlgorithm = InterpolatingAdjoint(autojacvec = ZygoteVJP(), checkpointing = true), interval_size, continuity_term = 100, solargs...)
     MultipleShooting(tstart, dt, tstop, solver, sense, interval_size, continuity_term, solargs)
 end
 
@@ -407,50 +407,8 @@ Useful for initial training of the system since it it faster than training with 
 """
 struct Collocation <: CollocationStrategy
     window_size::Integer
+    random::Bool
 end
-
-function Collocation(; window_size::Integer = 0)
-    Collocation(window_size)
-end
-
-
-
-"""
-    RandomCollocation(; window_size = 0)
-
-Similar to Collocation, but timesteps are sampled randomly from the trajectory instead of sequential.
-
-## Keyword Arguments
-- `window_size = 0`: Number of steps from each trajectory (starting at the beginning) that are used for training. If the number is zero then the whole trajectory is used.
-"""
-struct RandomCollocation <: CollocationStrategy
-    window_size::Integer
-end
-
-function RandomCollocation(; window_size::Integer = 0)
-    RandomCollocation(window_size)
-end
-
-function prepare_training(strategy::RandomCollocation)
-    samples = shuffle(1:strategy.window_size)
-
-    return (samples,)
-end
-
-function init_train_step(::RandomCollocation, t::Tuple, ta::Tuple)
-
-    mgn, data, meta, fields, target_fields, node_type, edge_features, senders, receivers, datapoint, mask, _ = t
-
-    sample = ta[1][datapoint]
-
-    cur_quantities = vcat([data[field][:, :, sample] for field in target_fields]...)
-    target_quantities = vcat([data["target|" * field][:, :, sample] for field in target_fields]...)
-    if typeof(meta["dt"]) <: AbstractArray
-        target_quantities_change = mgn.o_norm((target_quantities - cur_quantities) / (meta["dt"][sample + 1] - meta["dt"][sample]))
-    else
-        target_quantities_change = mgn.o_norm((target_quantities - cur_quantities) / Float32(meta["dt"]))
-    end
-    graph = build_graph(mgn, data, fields, sample, node_type, edge_features, senders, receivers)
-
-    return (mgn, graph, target_quantities_change, mask)
+function Collocation(;window_size::Integer = 0, random = true)
+    Collocation(window_size, random)
 end
