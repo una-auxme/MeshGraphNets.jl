@@ -445,8 +445,9 @@ function preprocess!(data, noise_fields, noise_stddevs, types_noisy, ts, device)
         if key == "edges" || length(data[key]) == 1 || size(data[key])[end] == 1
             continue
         end
-        if typeof(ts) == Collocation && ts.window_size <= 0
-            data[key] = data[key][:, :, shuffle(rng, 1:end)]
+        if typeof(ts) <: CollocationStrategy && ts.random
+            
+            data[key] = data[key][repeat([:], ndims(data[key])-1)..., shuffle(rng, ts.window_size == 0 ? collect(1:end) : collect(1:ts.window_size))]
         end
         seed!(rng, seed)
     end
@@ -570,6 +571,12 @@ function prepare_trajectory!(data, meta, device::Function; types_noisy, noise_st
     if !isnothing(ts) && (typeof(ts) <: CollocationStrategy)
         add_targets!(data, meta["target_features"], device)
         preprocess!(data, meta["target_features"], noise_stddevs, types_noisy, ts, device)
+        for field in meta["feature_names"]
+            if field == "mesh_pos" || field == "node_type" || field == "cells" || field in meta["target_features"]
+                continue
+            end
+            data[field] = device(data[field])
+        end
     else
         for field in meta["feature_names"]
             if field == "mesh_pos" || field == "node_type" || field == "cells"
