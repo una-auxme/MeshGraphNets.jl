@@ -7,7 +7,7 @@ import Distributions: Normal
 import Random: MersenneTwister
 import TFRecord: Example
 
-import HDF5: h5open
+import HDF5: h5open, Group, read_dataset
 import JLD2: jldopen
 import JSON: parse
 import Random: seed!, make_seed, shuffle
@@ -301,10 +301,20 @@ function read_h5!(datafile, data_keys, meta, is_jld)
                 close(file)
             end
 
-            if !haskey(meta, "dims")
-                throw(ErrorException("Edges for custom meshes without specifying domain dimensions is not supported yet"))
+            if haskey(meta, "custom_edges")
+                lock(l)
+                if is_jld
+                    throw(ErrorException("Custom edge definition is not supported for JLD2 files."))
+                else
+                    file = h5open(datafile, "r")
+
+                    edges = read_edges(file[k], meta["custom_edges"], traj_dict["node_type"], haskey(meta, "no_edges_node_types") ? meta["no_edges_node_types"] : [], haskey(meta, "exclude_node_indices") ? meta["exclude_node_indices"] : [])
+                    close(file)
+                end
+                unlock(l)
+            elseif haskey(meta, "dims") # this condition is basically useless, because if there would be no "dims", it would have failed earlier
+                edges = create_edges(dims, traj_dict["node_type"], haskey(meta, "no_edges_node_types") ? meta["no_edges_node_types"] : [])
             end
-            edges = create_edges(dims, traj_dict["node_type"], haskey(meta, "no_edges_node_types") ? meta["no_edges_node_types"] : [])
             traj_dict["edges"] = hcat(sort(edges)...)
 
             put!(ch, traj_dict)
@@ -378,6 +388,36 @@ function create_edges(dims, node_type, no_edges_node_types)
     end
 
     return edges
+end
+
+
+"""
+    read_edges(traj::Group, node_type, no_edges_node_types::Vector{Int}, exclude_node_indices::Vector{Int})
+
+    Read edges from trajectory group.
+
+    ## Arguments
+
+    - `traj`: HDF5 group containing this trajectory's data.
+    - `node_type`: Array of node types from the data file.
+    - `excluded_node_types`: Vector of node types that should not be connected with edges.
+    - `exclude_node_indices`: Vector of node indices that should not be connected with edges.
+
+    ## Returns
+
+    - Vector of connected node pair indices (as vectors).
+"""
+function read_edges(traj::Group, edge_key, node_type, no_edges_node_types, exclude_node_indices)
+    @assert haskey(traj, edge_key) "Key '$(edge_key)' not found in trajectory group '$(HDF5.name(traj))'" 
+    edges = read_dataset(traj, edge_key)
+    exclude_indices = findall(x -> x ∈ no_edges_node_types, node_type)
+    exclude_indices = vcat(exclude_indices, exclude_node_indices)
+    filter!(x -> x[1] ∉ exclude_indices && x[2] ∉ exclude_indices, edges)
+    edge_vec = Vector{Vector{Int32}}()
+    for edge in edges
+        push!(edge_vec, [edge[1], edge[2]])
+    end
+    return edge_vec
 end
 
 """
