@@ -41,17 +41,19 @@ export train_network, eval_network, der_minmax, data_meanstd
     steps::Integer = 10e6
     checkpoint::Integer = 10000
     norm_steps::Integer = 1000
+    max_norm_steps::Integer = 10f6
     types_updated::Vector{Integer} = [0, 5]
     types_noisy::Vector{Integer} = [0]
     training_strategy::TrainingStrategy = Collocation()
     use_cuda::Bool = true
-    gpu_idx::Integer = CUDA.deviceid()
+    gpu_device::Integer = CUDA.device()
     cell_idxs::Vector{Integer} = [0]
     num_rollouts::Integer = 10
     use_valid::Bool = true
     solver_valid::OrdinaryDiffEqAlgorithm = Tsit5()
     solver_valid_dt::Union{Nothing, Float32} = nothing
     wandb_logger::Union{Nothing, Wandb.WandbLogger} = nothing
+    reset_valid::Bool = false
 end
 
 """
@@ -69,7 +71,7 @@ Initializes the normalisers based on the given dataset and its metadata.
 - Dictionary of each node feature and its normaliser as key-value pair.
 - Dictionary of each output feature and its normaliser as key-value pair.
 """
-function calc_norms(dataset, norm_steps, device)
+function calc_norms(dataset, device)
     quantities = 0
     n_norms = Dict{String, Union{NormaliserOffline, NormaliserOnline}}()
     o_norms = Dict{String, Union{NormaliserOffline, NormaliserOnline}}()
@@ -122,7 +124,7 @@ function calc_norms(dataset, norm_steps, device)
                         if haskey(dataset.meta["features"][feature], "output_min") && haskey(dataset.meta["features"][feature], "output_max")
                             o_norms[feature] = NormaliserOfflineMinMax(Float32(dataset.meta["features"][feature]["output_min"]), Float32(dataset.meta["features"][feature]["output_max"]), Float32(dataset.meta["features"][feature]["target_min"]), Float32(dataset.meta["features"][feature]["target_max"]))
                         else
-                            o_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(norm_steps))
+                            o_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(args.max_norm_steps))
                         end
                     end
                 else
@@ -131,7 +133,7 @@ function calc_norms(dataset, norm_steps, device)
                         if haskey(dataset.meta["features"][feature], "output_min") && haskey(dataset.meta["features"][feature], "output_max")
                             o_norms[feature] = NormaliserOfflineMinMax(Float32(dataset.meta["features"][feature]["output_min"]), Float32(dataset.meta["features"][feature]["output_max"]))
                         else
-                            o_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(norm_steps))
+                            o_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(args.max_norm_steps))
                         end
                     end
                 end
@@ -141,13 +143,13 @@ function calc_norms(dataset, norm_steps, device)
                     if haskey(dataset.meta["features"][feature], "output_min") && haskey(dataset.meta["features"][feature], "output_max")
                         o_norms[feature] = NormaliserOfflineMeanStd(Float32(dataset.meta["features"][feature]["output_mean"]), Float32(dataset.meta["features"][feature]["output_std"]))
                     else
-                        o_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(norm_steps))
+                        o_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(args.max_norm_steps))
                     end
                 end
             else
-                n_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(norm_steps))
+                n_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(args.max_norm_steps))
                 if feature in dataset.meta["target_features"]
-                    o_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(norm_steps))
+                    o_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(args.max_norm_steps))
                 end
             end
         end
@@ -177,15 +179,17 @@ Starts the training process with the given configuration.
 - `steps = 10e6`: Number of training steps.
 - `checkpoint = 10000`: Number of steps after which checkpoints are created.
 - `norm_steps = 1000`: Number of steps before training (accumulate normalization stats).
+- `max_norm_steps = 10f6`: Number of steps after which no more normalization stats are collected. 
 - `types_updated = [0, 5]`: Array containing node types which are updated after each step.
 - `types_noisy = [0]`: Array containing node types which noise is added to.
 - `training_strategy = Collocation()`: Methods used for training. See [documentation](https://una-auxme.github.io/MeshGraphNets.jl/dev/strategies/).
 - `use_cuda = true`: Whether a GPU is used for training or not (if available). Currently only CUDA GPUs are supported.
-- `gpu_idx = CUDA.deviceid()`: Index of GPU. See *nvidia-smi* for reference.
+- `gpu_device = CUDA.device()`: Current CUDA device (aka GPU). See *nvidia-smi* for reference.
 - `cell_idxs = [0]`: Indices of cells that are plotted during validation (if enabled).
 - `solver_valid = Tsit5()`: Which solver should be used for validation during training.
 - `solver_valid_dt = nothing`: If set, the solver for validation will use fixed timesteps.
 - `wandb_logger` = nothing: If set, a [Wandb](https://github.com/avik-pal/Wandb.jl) WandbLogger will be used for logging the training.
+- `reset_valid = false`: If set, the previous minimal validation loss will be overwritten.
 
 ## Training Strategies
 - `Collocation`
@@ -197,13 +201,14 @@ See [CylinderFlow Example](https://una-auxme.github.io/MeshGraphNets.jl/dev/cyli
 
 ## Returns
 - Trained network as a [`GraphNetwork`](@ref) struct.
+- Minimum of validation loss (for hyperparameter tuning).
 """
 function train_network(noise_stddevs, opt, ds_path, cp_path; kws...)
     args = Args(;kws...)
 
     if CUDA.functional() && args.use_cuda
         @info "Training on CUDA GPU..."
-        CUDA.device!(args.gpu_idx)
+        CUDA.device!(args.gpu_device)
         CUDA.allowscalar(false)
         device = gpu_device()
     else
@@ -220,7 +225,7 @@ function train_network(noise_stddevs, opt, ds_path, cp_path; kws...)
 
     println("Building model...")
 
-    quantities, e_norms, n_norms, o_norms = calc_norms(dataset, args.norm_steps, device)
+    quantities, e_norms, n_norms, o_norms = calc_norms(dataset, device)
 
     dims = dataset.meta["dims"]
     outputs = 0
@@ -261,12 +266,19 @@ Initializes the network and performs the training loop.
 - `device`: Device where the normaliser should be loaded (see [Lux GPU Management](https://lux.csail.mit.edu/dev/manual/gpu_management#gpu-management)).
 - `cp_path`: Path where checkpoints are saved.
 - `args`: Keyword arguments for configuring the training.
+
+## Returns
+- Minimum of validation loss (for hyperparameter tuning).
 """
 function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise, df_train, df_valid, device, cp_path, args::Args)
     checkpoint = length(df_train.step) > 0 ? last(df_train.step) : 0
     step = checkpoint
     cp_progress = 0
-    min_validation_loss = length(df_valid.loss) > 0 ? last(df_valid.loss) : Inf32
+    if args.reset_valid
+        min_validation_loss = Inf32
+    else
+        min_validation_loss = length(df_valid.loss) > 0 ? last(df_valid.loss) : Inf32
+    end
     last_validation_loss = min_validation_loss
 
     pr = Progress(args.epochs*args.steps; desc = "Training progress: ", dt=1.0, barlen=50, start=checkpoint, showspeed=true)
@@ -393,7 +405,7 @@ Starts the evaluation process with the given configuration.
 - `hidden_layers = 2`: Number of hidden layers inside MLPs.
 - `types_updated = [0, 5]`: Array containing node types which are updated after each step.
 - `use_cuda = true`: Whether a GPU is used for training or not (if available). Currently only CUDA GPUs are supported.
-- `gpu_idx = CUDA.deviceid()`: Index of GPU. See *nvidia-smi* for reference.
+- `gpu_device = CUDA.device()`: Current CUDA device (aka GPU). See *nvidia-smi* for reference.
 - `num_rollouts = 10`: Number of trajectories that are simulated (from the test dataset).
 - `use_valid = true`: Whether the last checkpoint with the minimal validation loss should be used.
 """
@@ -402,7 +414,7 @@ function eval_network(ds_path, cp_path::String, out_path::String, solver = nothi
 
     if CUDA.functional() && args.use_cuda
         @info "Evaluating on CUDA GPU..."
-        CUDA.device!(args.gpu_idx)
+        CUDA.device!(args.gpu_device)
         CUDA.allowscalar(false)
         device = gpu_device()
     else
@@ -419,7 +431,7 @@ function eval_network(ds_path, cp_path::String, out_path::String, solver = nothi
 
     println("Building model...")
 
-    quantities, e_norms, n_norms, o_norms = calc_norms(dataset, args.norm_steps, device)
+    quantities, e_norms, n_norms, o_norms = calc_norms(dataset, device)
 
     dims = dataset.meta["dims"]
     outputs = 0
