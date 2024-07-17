@@ -11,6 +11,7 @@ on:
       - '.github/workflows/Documentation.yml'
     tags: 
       - '*'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -23,7 +24,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: "Set up Julia"
-        uses: julia-actions/setup-julia@v1
+        uses: julia-actions/setup-julia@latest
         with:
           version: '1.10'
           arch: x64
