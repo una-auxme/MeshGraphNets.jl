@@ -4,7 +4,7 @@
 #
 
 import Printf: @sprintf
-import Statistics: mean, stdm
+import Statistics: stdm
 
 """
     der_minmax(path)
