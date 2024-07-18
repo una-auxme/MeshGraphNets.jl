@@ -3,8 +3,7 @@
 # Licensed under the MIT license. See LICENSE file in the project root for details.
 #
 
-import DifferentialEquations: ODEFunction
-import SciMLBase: AbstractSensitivityAlgorithm
+import SciMLBase: AbstractSensitivityAlgorithm, ODEFunction
 import SciMLSensitivity: InterpolatingAdjoint, ZygoteVJP
 
 #######################################################

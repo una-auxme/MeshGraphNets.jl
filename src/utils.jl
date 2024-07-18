@@ -4,7 +4,7 @@
 #
 
 import Printf: @sprintf
-import Statistics: mean, stdm
+import Statistics: stdm
 
 """
     der_minmax(path)
@@ -286,19 +286,3 @@ function clear_log(lines::Integer, move_up = true)
         clear_line()
     end
 end
-
-####################################################################
-# Overwritten for differentiation over GraphNetwork and normaliser #
-####################################################################
-
-Zygote.accum(x::Base.RefValue{Any}, y::NamedTuple{(:model, :ps, :st, :e_norm, :n_norm, :o_norm)}) = Zygote.accum(x[], y)
-
-Zygote.accum(x::NamedTuple{(:model, :ps, :st, :e_norm, :n_norm, :o_norm)}, y::Base.RefValue{Any}) = Zygote.accum(x, y[])
-
-Zygote.accum(x::Base.RefValue{Any}, y::NamedTuple{(:data_min, :data_max, :target_min, :target_max)}) = Zygote.accum(x[], y)
-
-Base.:+(x::Base.RefValue{Any}, y::NamedTuple{(:model, :ps, :st, :e_norm, :n_norm, :o_norm)}) = Zygote.accum(x[], y)
-
-Base.:+(x::NamedTuple{(:model, :ps, :st, :e_norm, :n_norm, :o_norm)}, y::Base.RefValue{Any}) = Zygote.accum(x, y[])
-
-Base.:+(x::Base.RefValue{Any}, y::NamedTuple{(:data_min, :data_max, :target_min, :target_max)}) = Zygote.accum(x[], y)

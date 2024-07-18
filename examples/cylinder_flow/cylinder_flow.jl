@@ -5,7 +5,7 @@
 
 using MeshGraphNets
 
-import DifferentialEquations: Euler, Tsit5
+import OrdinaryDiffEq: Euler, Tsit5
 import Optimisers: Adam
 
 ######################

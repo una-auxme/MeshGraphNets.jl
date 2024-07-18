@@ -4,10 +4,11 @@
 #
 
 import Distributions: Normal
+import HDF5: Group
 import Random: MersenneTwister
 import TFRecord: Example
 
-import HDF5: h5open, Group, read_dataset
+import HDF5: read_dataset
 import JLD2: jldopen
 import JSON: parse
 import Random: seed!, make_seed, shuffle

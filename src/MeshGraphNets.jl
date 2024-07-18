@@ -13,14 +13,14 @@ using Optimisers
 using Wandb
 using Zygote
 
-import DifferentialEquations.OrdinaryDiffEq: OrdinaryDiffEqAlgorithm, Tsit5
+import OrdinaryDiffEq: OrdinaryDiffEqAlgorithm, Tsit5
 import ProgressMeter: Progress
 import SciMLBase: ODEProblem
 
 import Base: @kwdef
-import DifferentialEquations: solve, remake
 import HDF5: h5open, create_group, open_group
 import ProgressMeter: next!, update!, finish!
+import SciMLBase: solve, remake
 import Statistics: mean
 
 include("utils.jl")
