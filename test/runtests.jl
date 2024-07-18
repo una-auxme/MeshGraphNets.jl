@@ -14,11 +14,6 @@ using Aqua
         @testset "Method ambiguity" begin
             Aqua.test_ambiguities([MeshGraphNets])
         end
-        Aqua.test_all(MeshGraphNets; ambiguities = false, piracies = false)
-
-        # Piracy due to Zygote pullback
-        # @testset "Piracy" begin
-        #     Aqua.test_piracies(MeshGraphNets)
-        # end
+        Aqua.test_all(MeshGraphNets; ambiguities = false)
     end
 end
