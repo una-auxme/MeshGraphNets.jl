@@ -52,10 +52,11 @@ function der_minmax(path, is_training)
     result = Dict(tf => [Inf32, -Inf32] for tf in target_features)
 
     n_traj = dataset.meta["n_trajectories"]
-    
+
     for _ in 1:n_traj
-        data, meta = next_trajectory!(dataset, cpu_device(); types_noisy = [], noise_stddevs = [], ts = nothing)
-        dt =  Float32(meta["dt"][2] -  meta["dt"][1])
+        data, meta = next_trajectory!(
+            dataset, cpu_device(); types_noisy = [], noise_stddevs = [], ts = nothing)
+        dt = Float32(meta["dt"][2] - meta["dt"][1])
         for tf in target_features
             for i in 2:size(data[tf], 3)
                 ddiff = (data[tf][:, :, i] - data[tf][:, :, i - 1]) ./ dt
@@ -74,8 +75,9 @@ function der_minmax(path, is_training)
     if is_training
         n_traj_valid = dataset.meta["n_trajectories_valid"]
         for _ in 1:n_traj_valid
-            data, meta = next_trajectory!(dataset, cpu_device(); types_noisy = [], noise_stddevs = [], ts = nothing, is_training = false)
-            dt =  Float32(meta["dt"][2] -  meta["dt"][1])
+            data, meta = next_trajectory!(dataset, cpu_device(); types_noisy = [],
+                noise_stddevs = [], ts = nothing, is_training = false)
+            dt = Float32(meta["dt"][2] - meta["dt"][1])
             for tf in target_features
                 for i in 2:size(data[tf], 3)
                     ddiff = (data[tf][:, :, i] - data[tf][:, :, i - 1]) ./ dt
@@ -118,7 +120,7 @@ function data_meanstd(path)
         s = stdm(result[k], m)
         meanstd_dict[k] = (m, s)
     end
-    
+
     return meanstd_dict
 end
 
@@ -148,34 +150,41 @@ function data_meanstd(path, is_training)
     n_traj = dataset.meta["n_trajectories"]
 
     function isnumber(meta, f)
-        return getfield(Base, Symbol(uppercasefirst(meta["features"][f]["dtype"]))) == Int32 || getfield(Base, Symbol(uppercasefirst(meta["features"][f]["dtype"]))) == Float32
+        return getfield(Base, Symbol(uppercasefirst(meta["features"][f]["dtype"]))) ==
+               Int32 ||
+               getfield(Base, Symbol(uppercasefirst(meta["features"][f]["dtype"]))) ==
+               Float32
     end
 
     result_arrays = Dict()
     for f in features
         if isnumber(dataset.meta, f)
-            result_arrays[f] = zeros(Float32, dataset.meta["features"][f]["dim"], prod(dataset.meta["dims"]), 0)
+            result_arrays[f] = zeros(
+                Float32, dataset.meta["features"][f]["dim"], prod(dataset.meta["dims"]), 0)
         end
     end
     for tf in target_features
         if isnumber(dataset.meta, tf)
-            result_arrays["target|$tf"] = zeros(Float32, dataset.meta["features"][tf]["dim"], prod(dataset.meta["dims"]), 0)
+            result_arrays["target|$tf"] = zeros(
+                Float32, dataset.meta["features"][tf]["dim"], prod(dataset.meta["dims"]), 0)
         end
     end
-    
+
     for _ in 1:n_traj
-        data, meta = next_trajectory!(dataset, cpu_device(); types_noisy = [], noise_stddevs = [], ts = nothing)
-        
+        data, meta = next_trajectory!(
+            dataset, cpu_device(); types_noisy = [], noise_stddevs = [], ts = nothing)
+
         for f in features
             if isnumber(meta, f)
                 result_arrays[f] = cat(result_arrays[f], data[f]; dims = 3)
             end
         end
-        
-        dt =  Float32(meta["dt"][2] -  meta["dt"][1])
+
+        dt = Float32(meta["dt"][2] - meta["dt"][1])
         for tf in target_features
             if isnumber(meta, tf)
-                result_arrays["target|$tf"] = cat(result_arrays["target|$tf"], (data[tf][:, :, 2:end] - data[tf][:, :, 1:end-1]) ./ dt; dims = 3)
+                result_arrays["target|$tf"] = cat(result_arrays["target|$tf"],
+                    (data[tf][:, :, 2:end] - data[tf][:, :, 1:(end - 1)]) ./ dt; dims = 3)
             end
         end
     end
@@ -183,18 +192,21 @@ function data_meanstd(path, is_training)
     if is_training
         n_traj_valid = dataset.meta["n_trajectories_valid"]
         for _ in 1:n_traj_valid
-            data, meta = next_trajectory!(dataset, cpu_device(); types_noisy = [], noise_stddevs = [], ts = nothing, is_training = false)
-            
+            data, meta = next_trajectory!(dataset, cpu_device(); types_noisy = [],
+                noise_stddevs = [], ts = nothing, is_training = false)
+
             for f in features
                 if isnumber(meta, f)
                     result_arrays[f] = cat(result_arrays[f], data[f]; dims = 3)
                 end
             end
-            
-            dt =  Float32(meta["dt"][2] -  meta["dt"][1])
+
+            dt = Float32(meta["dt"][2] - meta["dt"][1])
             for tf in target_features
                 if isnumber(meta, tf)
-                   result_arrays["target|$tf"] = cat(result_arrays["target|$tf"], (data[tf][:, :, 2:end] - data[tf][:, :, 1:end-1]) ./ dt; dims = 3)
+                    result_arrays["target|$tf"] = cat(result_arrays["target|$tf"],
+                        (data[tf][:, :, 2:end] - data[tf][:, :, 1:(end - 1)]) ./ dt;
+                        dims = 3)
                 end
             end
         end
@@ -280,7 +292,10 @@ Deletes the content of the given number of lines in the terminal.
 - `move_up`: Whether the cursor should be moved up one line before deleting.
 """
 function clear_log(lines::Integer, move_up = true)
-    @assert lines > 0 "The number of lines in the terminal to be cleared must be greater than 0 : lines == $lines"
+    if lines <= 0
+        throw(ArgumentError("""Expected positive number of lines to clear,
+                            got: lines == $lines"""))
+    end
     clear_line(move_up)
     for _ in 1:lines
         clear_line()
