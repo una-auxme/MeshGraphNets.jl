@@ -302,11 +302,11 @@ Useful if the network tends to get stuck in a local minimum if SolverTraining is
 - `dt`: Interval at which the simulation is saved.
 - `tstop`: Stop time of the simulation.
 - `solver`: Solver that is used for simulating the system.
-- `interval_size`: Size of the intervals (i.e. number of datapoints in one interval).
-- `continuity_term = 100`: Factor by which the error between points of concurrent intervals is multiplied.
 
 ## Keyword Arguments
-- `sense = InterpolatingAdjoint(autojacvec = ZygoteVJP(), checkpointing = true)`:
+- `sense = InterpolatingAdjoint(autojacvec = ZygoteVJP(), checkpointing = true)`: The sensitivity algorithm that is used for caluclating the sensitivities.
+- `interval_size`: Size of the intervals (i.e. number of datapoints in one interval).
+- `continuity_term = 100`: Factor by which the error between points of concurrent intervals is multiplied.
 - `solargs`: Keyword arguments that are passed on to the solver.
 """
 struct MultipleShooting <: SolverStrategy
@@ -436,6 +436,7 @@ Useful for initial training of the system since it it faster than training with 
 
 ## Keyword Arguments
 - `window_size = 0`: Number of steps from each trajectory (starting at the beginning) that are used for training. If the number is zero then the whole trajectory is used.
+- `random = true`: Whether the derivatives of the data should shuffled before the training.
 """
 struct DerivativeTraining <: DerivativeStrategy
     window_size::Integer
