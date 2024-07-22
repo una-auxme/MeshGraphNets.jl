@@ -39,8 +39,10 @@ Solves the ODEProblem of the MGN with the given solver.
 - Solution of the ODEProblem at the specified timesteps.
 - Timesteps corresponding to the solution.
 """
-function rollout(solver, mgn::GraphNetwork, initial_state, fields, meta, target_fields, target_dict, node_type, edge_features, senders, receivers, val_mask, inflow_mask, data, start, stop, dt, saves; show_progress = true)
-    pr = show_progress ? ProgressUnknown(showspeed = true) : nothing
+function rollout(solver, mgn::GraphNetwork, initial_state, fields, meta, target_fields,
+        target_dict, node_type, edge_features, senders, receivers, val_mask,
+        inflow_mask, data, start, stop, dt, saves; show_progress = true)
+    pr = show_progress ? ProgressUnknown(; showspeed = true) : nothing
 
     interval = (start, stop)
     x0 = vcat([initial_state[field] for field in target_fields]...)
@@ -48,17 +50,20 @@ function rollout(solver, mgn::GraphNetwork, initial_state, fields, meta, target_
     for i in keys(target_dict)
         delete!(inputs, i)
     end
-    prob = ODEProblem(ode_func_eval, x0, interval, (mgn, mgn.ps, data, inputs, fields, meta, target_fields, target_dict, node_type, edge_features, senders, receivers, val_mask, inflow_mask, saves[2] - saves[1], pr))
+    prob = ODEProblem(ode_func_eval, x0, interval,
+        (mgn, mgn.ps, data, inputs, fields, meta, target_fields,
+            target_dict, node_type, edge_features, senders, receivers,
+            val_mask, inflow_mask, saves[2] - saves[1], pr))
     if isnothing(dt)
         sol = solve(prob, solver; saveat = saves, tstops = saves)
     else
         sol = solve(prob, solver; adaptive = false, dt = dt, saveat = saves)
     end
-    
+
     if show_progress
         finish!(pr)
     end
-    
+
     return sol.u, sol.t
 end
 
@@ -93,12 +98,19 @@ The parameter tuple contains the following variables:
 ## Returns
 - See [ode_step](@ref).
 """
-function ode_func_train(x, (mgn, ps, data, inputs, fields, meta, target_fields, target_dict, node_type, edge_features, senders, receivers, val_mask, inflow_mask, strategy, pr), t)
+function ode_func_train(x,
+        (mgn, ps, data, inputs, fields, meta, target_fields, target_dict, node_type,
+            edge_features, senders, receivers, val_mask, inflow_mask, strategy, pr),
+        t)
     bx = Zygote.Buffer(x)
     bx[:, :] = x
-    bx[inflow_mask] = vcat([data[field][:, :, floor(Int, t / strategy.dt) + 1] for field in target_fields]...)[inflow_mask]
+    bx[inflow_mask] = vcat([data[field][:, :, floor(Int, t / strategy.dt) + 1]
+                            for field in target_fields]...)[inflow_mask]
 
-    return ode_step(bx, (mgn, ps, inputs, fields, meta, target_fields, target_dict, node_type, edge_features, senders, receivers, val_mask, pr), t)
+    return ode_step(bx,
+        (mgn, ps, inputs, fields, meta, target_fields, target_dict,
+            node_type, edge_features, senders, receivers, val_mask, pr),
+        t)
 end
 
 """
@@ -132,10 +144,17 @@ The parameter tuple contains the following variables:
 ## Returns
 - See [ode_step](@ref).
 """
-function ode_func_eval(x, (mgn, ps, data, inputs, fields, meta, target_fields, target_dict, node_type, edge_features, senders, receivers, val_mask, inflow_mask, saves_dt, pr), t)
-    x[inflow_mask] = vcat([data[field][:, :, floor(Int, t / saves_dt) + 1] for field in target_fields]...)[inflow_mask]
+function ode_func_eval(x,
+        (mgn, ps, data, inputs, fields, meta, target_fields, target_dict, node_type,
+            edge_features, senders, receivers, val_mask, inflow_mask, saves_dt, pr),
+        t)
+    x[inflow_mask] = vcat([data[field][:, :, floor(Int, t / saves_dt) + 1]
+                           for field in target_fields]...)[inflow_mask]
 
-    return ode_step(x, (mgn, ps, inputs, fields, meta, target_fields, target_dict, node_type, edge_features, senders, receivers, val_mask, pr), t)
+    return ode_step(x,
+        (mgn, ps, inputs, fields, meta, target_fields, target_dict,
+            node_type, edge_features, senders, receivers, val_mask, pr),
+        t)
 end
 
 """
@@ -166,29 +185,35 @@ The parameter tuple contains the following variables:
 ## Returns
 - Output of the ODE at the current timestep.
 """
-function ode_step(x, (mgn, ps, inputs, fields, meta, target_fields, target_dict, node_type, edge_features, senders, receivers, val_mask, pr), t)
+function ode_step(x,
+        (mgn, ps, inputs, fields, meta, target_fields, target_dict,
+            node_type, edge_features, senders, receivers, val_mask, pr),
+        t)
     offset = 1
     for k in target_fields
-        inputs[k] = x[offset:offset + target_dict[k] - 1, :]
+        inputs[k] = x[offset:(offset + target_dict[k] - 1), :]
         offset += target_dict[k]
     end
 
-    graph = build_graph(mgn, inputs, fields, 1, node_type, edge_features, senders, receivers)
+    graph = build_graph(
+        mgn, inputs, fields, 1, node_type, edge_features, senders, receivers)
     output, st = mgn.model(graph, ps, mgn.st)
     mgn.st = st
 
     indices = [meta["features"][tf]["dim"] for tf in target_fields]
 
     buf = Zygote.Buffer(output)
-    for i in 1:length(target_fields)
-        buf[sum(indices[1:i-1])+1:sum(indices[1:i]), :] = inverse_data(mgn.o_norm[target_fields[i]], output[sum(indices[1:i-1])+1:sum(indices[1:i]), :])
+    for i in eachindex(target_fields)
+        buf[(sum(indices[1:(i - 1)]) + 1):sum(indices[1:i]), :] = inverse_data(
+            mgn.o_norm[target_fields[i]],
+            output[(sum(indices[1:(i - 1)]) + 1):sum(indices[1:i]), :])
     end
-    
+
     @ignore_derivatives begin
         if !isnothing(pr)
-            next!(pr, showvalues=[(:t,"$(t)")])
+            next!(pr; showvalues = [(:t, "$(t)")])
         end
     end
-    
+
     return copy(buf) .* val_mask
 end

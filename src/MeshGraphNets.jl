@@ -41,7 +41,7 @@ export train_network, eval_network, der_minmax, data_meanstd
     steps::Integer = 10e6
     checkpoint::Integer = 10000
     norm_steps::Integer = 1000
-    max_norm_steps::Integer = 10f6
+    max_norm_steps::Integer = 10.0f6
     types_updated::Vector{Integer} = [0, 5]
     types_noisy::Vector{Integer} = [0]
     training_strategy::TrainingStrategy = DerivativeTraining()
@@ -77,10 +77,14 @@ function calc_norms(dataset, device, args::Args)
     o_norms = Dict{String, Union{NormaliserOffline, NormaliserOnline}}()
 
     if haskey(dataset.meta, "edges")
-        if haskey(dataset.meta["edges"], "data_min") && haskey(dataset.meta["edges"], "data_max")
-            e_norms = NormaliserOfflineMinMax(Float32(dataset.meta["edges"]["data_min"]), Float32(dataset.meta["edges"]["data_max"]))
-        elseif haskey(dataset.meta["edges"], "data_mean") && haskey(dataset.meta["edges"], "data_std")
-            e_norms = NormaliserOfflineMeanStd(Float32(dataset.meta["edges"]["data_mean"]), Float32(dataset.meta["edges"]["data_std"]))
+        if haskey(dataset.meta["edges"], "data_min") &&
+           haskey(dataset.meta["edges"], "data_max")
+            e_norms = NormaliserOfflineMinMax(Float32(dataset.meta["edges"]["data_min"]),
+                Float32(dataset.meta["edges"]["data_max"]))
+        elseif haskey(dataset.meta["edges"], "data_mean") &&
+               haskey(dataset.meta["edges"], "data_std")
+            e_norms = NormaliserOfflineMeanStd(Float32(dataset.meta["edges"]["data_mean"]),
+                Float32(dataset.meta["edges"]["data_std"]))
         else
             throw(KeyError("Keyword \"edges\" was specified in metadata, but no normalization data was provided."))
         end
@@ -92,19 +96,30 @@ function calc_norms(dataset, device, args::Args)
         if feature == "mesh_pos" || feature == "cells"
             continue
         end
-        if getfield(Base, Symbol(uppercasefirst(dataset.meta["features"][feature]["dtype"]))) == Bool
+        if getfield(
+            Base, Symbol(uppercasefirst(dataset.meta["features"][feature]["dtype"]))) ==
+           Bool
             quantities += 1
             n_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0)
             if feature in dataset.meta["target_features"]
                 o_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0)
             end
-        elseif getfield(Base, Symbol(uppercasefirst(dataset.meta["features"][feature]["dtype"]))) == Int32
-            if haskey(dataset.meta["features"][feature], "onehot") && dataset.meta["features"][feature]["onehot"]
-                quantities += dataset.meta["features"][feature]["data_max"] - dataset.meta["features"][feature]["data_min"] + 1
-                if haskey(dataset.meta["features"][feature], "target_min") && haskey(dataset.meta["features"][feature], "target_max")
-                    n_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0, Float32(dataset.meta["features"][feature]["target_min"]), Float32(dataset.meta["features"][feature]["target_max"]))
+        elseif getfield(
+            Base, Symbol(uppercasefirst(dataset.meta["features"][feature]["dtype"]))) ==
+               Int32
+            if haskey(dataset.meta["features"][feature], "onehot") &&
+               dataset.meta["features"][feature]["onehot"]
+                quantities += dataset.meta["features"][feature]["data_max"] -
+                              dataset.meta["features"][feature]["data_min"] + 1
+                if haskey(dataset.meta["features"][feature], "target_min") &&
+                   haskey(dataset.meta["features"][feature], "target_max")
+                    n_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0,
+                        Float32(dataset.meta["features"][feature]["target_min"]),
+                        Float32(dataset.meta["features"][feature]["target_max"]))
                     if feature in dataset.meta["target_features"]
-                        o_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0, Float32(dataset.meta["features"][feature]["target_min"]), Float32(dataset.meta["features"][feature]["target_max"]))
+                        o_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0,
+                            Float32(dataset.meta["features"][feature]["target_min"]),
+                            Float32(dataset.meta["features"][feature]["target_max"]))
                     end
                 else
                     n_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0)
@@ -113,43 +128,75 @@ function calc_norms(dataset, device, args::Args)
                     end
                 end
             else
-                throw(ErrorException("Int32 types that are not onehot types are not supported yet."))
+                throw(ArgumentError("Int32 types that are not onehot types are not supported yet."))
             end
         else
             quantities += dataset.meta["features"][feature]["dim"]
-            if haskey(dataset.meta["features"][feature], "data_min") && haskey(dataset.meta["features"][feature], "data_max")
-                if haskey(dataset.meta["features"][feature], "target_min") && haskey(dataset.meta["features"][feature], "target_max")
-                    n_norms[feature] = NormaliserOfflineMinMax(Float32(dataset.meta["features"][feature]["data_min"]), Float32(dataset.meta["features"][feature]["data_max"]), Float32(dataset.meta["features"][feature]["target_min"]), Float32(dataset.meta["features"][feature]["target_max"]))
+            if haskey(dataset.meta["features"][feature], "data_min") &&
+               haskey(dataset.meta["features"][feature], "data_max")
+                if haskey(dataset.meta["features"][feature], "target_min") &&
+                   haskey(dataset.meta["features"][feature], "target_max")
+                    n_norms[feature] = NormaliserOfflineMinMax(
+                        Float32(dataset.meta["features"][feature]["data_min"]),
+                        Float32(dataset.meta["features"][feature]["data_max"]),
+                        Float32(dataset.meta["features"][feature]["target_min"]),
+                        Float32(dataset.meta["features"][feature]["target_max"]))
                     if feature in dataset.meta["target_features"]
-                        if haskey(dataset.meta["features"][feature], "output_min") && haskey(dataset.meta["features"][feature], "output_max")
-                            o_norms[feature] = NormaliserOfflineMinMax(Float32(dataset.meta["features"][feature]["output_min"]), Float32(dataset.meta["features"][feature]["output_max"]), Float32(dataset.meta["features"][feature]["target_min"]), Float32(dataset.meta["features"][feature]["target_max"]))
+                        if haskey(dataset.meta["features"][feature], "output_min") &&
+                           haskey(dataset.meta["features"][feature], "output_max")
+                            o_norms[feature] = NormaliserOfflineMinMax(
+                                Float32(dataset.meta["features"][feature]["output_min"]),
+                                Float32(dataset.meta["features"][feature]["output_max"]),
+                                Float32(dataset.meta["features"][feature]["target_min"]),
+                                Float32(dataset.meta["features"][feature]["target_max"]))
                         else
-                            o_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(args.max_norm_steps))
+                            o_norms[feature] = NormaliserOnline(
+                                dataset.meta["features"][feature]["dim"],
+                                device; max_acc = Float32(args.max_norm_steps))
                         end
                     end
                 else
-                    n_norms[feature] = NormaliserOfflineMinMax(Float32(dataset.meta["features"][feature]["data_min"]), Float32(dataset.meta["features"][feature]["data_max"]))
+                    n_norms[feature] = NormaliserOfflineMinMax(
+                        Float32(dataset.meta["features"][feature]["data_min"]),
+                        Float32(dataset.meta["features"][feature]["data_max"]))
                     if feature in dataset.meta["target_features"]
-                        if haskey(dataset.meta["features"][feature], "output_min") && haskey(dataset.meta["features"][feature], "output_max")
-                            o_norms[feature] = NormaliserOfflineMinMax(Float32(dataset.meta["features"][feature]["output_min"]), Float32(dataset.meta["features"][feature]["output_max"]))
+                        if haskey(dataset.meta["features"][feature], "output_min") &&
+                           haskey(dataset.meta["features"][feature], "output_max")
+                            o_norms[feature] = NormaliserOfflineMinMax(
+                                Float32(dataset.meta["features"][feature]["output_min"]),
+                                Float32(dataset.meta["features"][feature]["output_max"]))
                         else
-                            o_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(args.max_norm_steps))
+                            o_norms[feature] = NormaliserOnline(
+                                dataset.meta["features"][feature]["dim"],
+                                device; max_acc = Float32(args.max_norm_steps))
                         end
                     end
                 end
-            elseif haskey(dataset.meta["features"][feature], "data_mean") && haskey(dataset.meta["features"][feature], "data_std")
-                n_norms[feature] = NormaliserOfflineMeanStd(Float32(dataset.meta["features"][feature]["data_mean"]), Float32(dataset.meta["features"][feature]["data_std"]))
+            elseif haskey(dataset.meta["features"][feature], "data_mean") &&
+                   haskey(dataset.meta["features"][feature], "data_std")
+                n_norms[feature] = NormaliserOfflineMeanStd(
+                    Float32(dataset.meta["features"][feature]["data_mean"]),
+                    Float32(dataset.meta["features"][feature]["data_std"]))
                 if feature in dataset.meta["target_features"]
-                    if haskey(dataset.meta["features"][feature], "output_min") && haskey(dataset.meta["features"][feature], "output_max")
-                        o_norms[feature] = NormaliserOfflineMeanStd(Float32(dataset.meta["features"][feature]["output_mean"]), Float32(dataset.meta["features"][feature]["output_std"]))
+                    if haskey(dataset.meta["features"][feature], "output_min") &&
+                       haskey(dataset.meta["features"][feature], "output_max")
+                        o_norms[feature] = NormaliserOfflineMeanStd(
+                            Float32(dataset.meta["features"][feature]["output_mean"]),
+                            Float32(dataset.meta["features"][feature]["output_std"]))
                     else
-                        o_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(args.max_norm_steps))
+                        o_norms[feature] = NormaliserOnline(
+                            dataset.meta["features"][feature]["dim"],
+                            device; max_acc = Float32(args.max_norm_steps))
                     end
                 end
             else
-                n_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(args.max_norm_steps))
+                n_norms[feature] = NormaliserOnline(
+                    dataset.meta["features"][feature]["dim"],
+                    device; max_acc = Float32(args.max_norm_steps))
                 if feature in dataset.meta["target_features"]
-                    o_norms[feature] = NormaliserOnline(dataset.meta["features"][feature]["dim"], device; max_acc = Float32(args.max_norm_steps))
+                    o_norms[feature] = NormaliserOnline(
+                        dataset.meta["features"][feature]["dim"],
+                        device; max_acc = Float32(args.max_norm_steps))
                 end
             end
         end
@@ -179,7 +226,7 @@ Starts the training process with the given configuration.
 - `steps = 10e6`: Number of training steps.
 - `checkpoint = 10000`: Number of steps after which checkpoints are created.
 - `norm_steps = 1000`: Number of steps before training (accumulate normalization stats).
-- `max_norm_steps = 10f6`: Number of steps after which no more normalization stats are collected. 
+- `max_norm_steps = 10f6`: Number of steps after which no more normalization stats are collected.
 - `types_updated = [0, 5]`: Array containing node types which are updated after each step.
 - `types_noisy = [0]`: Array containing node types which noise is added to.
 - `training_strategy = DerivativeTraining()`: Methods used for training. See [documentation](https://una-auxme.github.io/MeshGraphNets.jl/dev/strategies/).
@@ -203,7 +250,7 @@ See [CylinderFlow Example](https://una-auxme.github.io/MeshGraphNets.jl/dev/cyli
 - Minimum of validation loss (for hyperparameter tuning).
 """
 function train_network(noise_stddevs, opt, ds_path, cp_path; kws...)
-    args = Args(;kws...)
+    args = Args(; kws...)
 
     if CUDA.functional() && args.use_cuda
         @info "Training on CUDA GPU..."
@@ -232,20 +279,23 @@ function train_network(noise_stddevs, opt, ds_path, cp_path; kws...)
         outputs += dataset.meta["features"][tf]["dim"]
     end
 
-    mgn, opt_state, df_train, df_valid = load(quantities, typeof(dims) <: AbstractArray ? length(dims) : dims, e_norms, n_norms, o_norms, outputs, args.mps, args.layer_size, args.hidden_layers, opt, device, cp_path)
+    mgn, opt_state, df_train, df_valid = load(
+        quantities, typeof(dims) <: AbstractArray ? length(dims) : dims,
+        e_norms, n_norms, o_norms, outputs, args.mps,
+        args.layer_size, args.hidden_layers, opt, device, cp_path)
 
     if isnothing(opt_state)
         opt_state = Optimisers.setup(opt, mgn.ps)
     end
     Lux.trainmode(mgn.st)
 
-    
     clear_log(1, false)
     @info "Model built!"
     print("Compiling code...")
     print("\u1b[1G")
 
-    min_validation_loss = train_mgn!(mgn, opt_state, dataset, noise_stddevs, df_train, df_valid, device, cp_path, args)
+    min_validation_loss = train_mgn!(
+        mgn, opt_state, dataset, noise_stddevs, df_train, df_valid, device, cp_path, args)
 
     return mgn, min_validation_loss
 end
@@ -269,7 +319,8 @@ Initializes the network and performs the training loop.
 ## Returns
 - Minimum of validation loss (for hyperparameter tuning).
 """
-function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise, df_train, df_valid, device, cp_path, args::Args)
+function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise,
+        df_train, df_valid, device, cp_path, args::Args)
     checkpoint = length(df_train.step) > 0 ? last(df_train.step) : 0
     step = checkpoint
     cp_progress = 0
@@ -280,32 +331,44 @@ function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise, df_tr
     end
     last_validation_loss = min_validation_loss
 
-    pr = Progress(args.epochs*args.steps; desc = "Training progress: ", dt=1.0, barlen=50, start=checkpoint, showspeed=true)
+    pr = Progress(args.epochs * args.steps; desc = "Training progress: ",
+        dt = 1.0, barlen = 50, start = checkpoint, showspeed = true)
     update!(pr)
 
     local tmp_loss = 0.0f0
     local avg_loss = 0.0f0
-    fields = deleteat!(copy(dataset.meta["feature_names"]), findall(x -> x == "node_type" || x == "mesh_pos" || x == "cells", dataset.meta["feature_names"]))
+    fields = deleteat!(copy(dataset.meta["feature_names"]),
+        findall(x -> x == "node_type" || x == "mesh_pos" || x == "cells",
+            dataset.meta["feature_names"]))
 
     delta = get_delta(args.training_strategy, dataset.meta["trajectory_length"])
 
     train_tuple_additional = prepare_training(args.training_strategy)
 
-    for _ in checkpoint:delta:args.steps*args.epochs
-        data, meta = next_trajectory!(dataset, device; types_noisy = args.types_noisy, noise_stddevs = noise, ts = args.training_strategy)
-        
-        mask = Int32.(findall(x -> x in args.types_updated, data["node_type"][1, :, 1])) |> device
-        
-        val_mask = Float32.(map(x -> x in args.types_updated, data["node_type"][:, :, 1]))
-        val_mask = repeat(val_mask, sum(size(data[field], 1) for field in meta["target_features"]), 1) |> device
+    for _ in checkpoint:delta:(args.steps * args.epochs)
+        data, meta = next_trajectory!(dataset, device; types_noisy = args.types_noisy,
+            noise_stddevs = noise, ts = args.training_strategy)
 
-        node_type, senders, receivers, edge_features = create_base_graph(data, meta["features"]["node_type"]["data_max"], meta["features"]["node_type"]["data_min"], device)
+        mask = Int32.(findall(x -> x in args.types_updated, data["node_type"][1, :, 1])) |>
+               device
+
+        val_mask = Float32.(map(x -> x in args.types_updated, data["node_type"][:, :, 1]))
+        val_mask = repeat(
+            val_mask, sum(size(data[field], 1) for field in meta["target_features"]), 1) |>
+                   device
+
+        node_type, senders, receivers, edge_features = create_base_graph(
+            data, meta["features"]["node_type"]["data_max"],
+            meta["features"]["node_type"]["data_min"], device)
 
         for datapoint in 1:delta
-            train_tuple = init_train_step(args.training_strategy, (mgn, data, meta, fields, meta["target_features"], node_type, edge_features, senders, receivers, datapoint, mask, val_mask), train_tuple_additional)
-            
+            train_tuple = init_train_step(args.training_strategy,
+                (mgn, data, meta, fields, meta["target_features"], node_type,
+                    edge_features, senders, receivers, datapoint, mask, val_mask),
+                train_tuple_additional)
+
             gs, losses = train_step(args.training_strategy, train_tuple)
-                
+
             tmp_loss += sum(losses)
 
             if step + datapoint > args.norm_steps
@@ -313,12 +376,21 @@ function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise, df_tr
                     opt_state, ps = Optimisers.update(opt_state, mgn.ps, gs[i])
                     mgn.ps = ps
                 end
-                next!(pr, showvalues=[(:train_step,"$(step + datapoint)/$(args.epochs*args.steps)"), (:train_loss, sum(losses)), (:checkpoint, length(df_train.step) > 0 ? last(df_train.step) : 0), (:data_interval, delta == 1 ? "1:end" : 1:delta), (:min_validation_loss, min_validation_loss), (:last_validation_loss, last_validation_loss)])
+                next!(pr;
+                    showvalues = [
+                        (:train_step, "$(step + datapoint)/$(args.epochs*args.steps)"),
+                        (:train_loss, sum(losses)),
+                        (:checkpoint, length(df_train.step) > 0 ? last(df_train.step) : 0),
+                        (:data_interval, delta == 1 ? "1:end" : 1:delta),
+                        (:min_validation_loss, min_validation_loss),
+                        (:last_validation_loss, last_validation_loss)])
                 if !isnothing(args.wandb_logger)
                     Wandb.log(args.wandb_logger, Dict("train_loss" => l))
                 end
             else
-                next!(pr, showvalues=[(:step,"$(step + datapoint)/$(args.epochs*args.steps)"), (:loss,"acc norm stats..."), (:checkpoint, 0)])
+                next!(pr;
+                    showvalues = [(:step, "$(step + datapoint)/$(args.epochs*args.steps)"),
+                        (:loss, "acc norm stats..."), (:checkpoint, 0)])
             end
         end
 
@@ -328,43 +400,66 @@ function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise, df_tr
 
         avg_loss += tmp_loss
         tmp_loss = 0.0f0
-        
+
         if step > args.norm_steps && cp_progress >= args.checkpoint
             valid_error = 0.0f0
             gt = nothing
             prediction = nothing
-            pr_valid = Progress(dataset.meta["n_trajectories_valid"]; desc = "Validation progress: ", barlen = 50)
+            pr_valid = Progress(dataset.meta["n_trajectories_valid"];
+                desc = "Validation progress: ", barlen = 50)
 
             for i in 1:dataset.meta["n_trajectories_valid"]
-                data_valid, meta_valid = next_trajectory!(dataset, device; types_noisy = args.types_noisy, is_training = false)
-                
-                mask = Int32.(findall(x -> x in args.types_updated, data_valid["node_type"][1, :, 1])) |> device
-                node_type_valid, senders_valid, receivers_valid, edge_features_valid = create_base_graph(data_valid, meta_valid["features"]["node_type"]["data_max"], meta_valid["features"]["node_type"]["data_min"], device)
-                val_mask_valid = Float32.(map(x -> x in args.types_updated, data_valid["node_type"][:, :, 1]))
-                val_mask_valid = repeat(val_mask_valid, sum(size(data_valid[field], 1) for field in meta_valid["target_features"]), 1) |> device
+                data_valid, meta_valid = next_trajectory!(
+                    dataset, device; types_noisy = args.types_noisy, is_training = false)
 
-                inflow_mask_valid = repeat(data_valid["node_type"][:, :, 1] .== 1, sum(size(data_valid[field], 1) for field in meta_valid["target_features"]), 1) |> device
+                mask = Int32.(findall(
+                    x -> x in args.types_updated, data_valid["node_type"][1, :, 1])) |>
+                       device
+                node_type_valid, senders_valid, receivers_valid, edge_features_valid = create_base_graph(
+                    data_valid, meta_valid["features"]["node_type"]["data_max"],
+                    meta_valid["features"]["node_type"]["data_min"], device)
+                val_mask_valid = Float32.(map(
+                    x -> x in args.types_updated, data_valid["node_type"][:, :, 1]))
+                val_mask_valid = repeat(val_mask_valid,
+                    sum(size(data_valid[field], 1)
+                    for field in meta_valid["target_features"]),
+                    1) |> device
 
-                ve, g, p = validation_step(args.training_strategy, (
-                    mgn, data_valid, meta_valid, delta, args.solver_valid, args.solver_valid_dt, fields, node_type_valid,
-                    edge_features_valid, senders_valid, receivers_valid, mask, val_mask_valid, inflow_mask_valid, data_valid
-                ))
-                
+                inflow_mask_valid = repeat(data_valid["node_type"][:, :, 1] .== 1,
+                    sum(size(data_valid[field], 1)
+                    for field in meta_valid["target_features"]),
+                    1) |> device
+
+                ve, g, p = validation_step(args.training_strategy,
+                    (
+                        mgn, data_valid, meta_valid, delta, args.solver_valid,
+                        args.solver_valid_dt, fields, node_type_valid,
+                        edge_features_valid, senders_valid, receivers_valid, mask,
+                        val_mask_valid, inflow_mask_valid, data_valid
+                    ))
+
                 valid_error += ve
                 if i == 1
                     gt = g
                     prediction = p
                 end
-                
-                next!(pr_valid, showvalues = [(:trajectory, "$i/$(meta_valid["n_trajectories_valid"])"), (:valid_loss, "$((valid_error + ve) / i)")])
+
+                next!(pr_valid;
+                    showvalues = [
+                        (:trajectory, "$i/$(meta_valid["n_trajectories_valid"])"),
+                        (:valid_loss, "$((valid_error + ve) / i)")])
             end
 
             if !isnothing(args.wandb_logger)
-                Wandb.log(args.wandb_logger, Dict("validation_loss" => valid_error / dataset.meta["n_trajectories_valid"]))
+                Wandb.log(args.wandb_logger,
+                    Dict("validation_loss" => valid_error /
+                                              dataset.meta["n_trajectories_valid"]))
             end
 
             if valid_error / dataset.meta["n_trajectories_valid"] < min_validation_loss
-                save!(mgn, opt_state, df_train, df_valid, step, valid_error / dataset.meta["n_trajectories_valid"], joinpath(cp_path, "valid"); is_training = false)
+                save!(mgn, opt_state, df_train, df_valid, step,
+                    valid_error / dataset.meta["n_trajectories_valid"],
+                    joinpath(cp_path, "valid"); is_training = false)
                 min_validation_loss = valid_error / dataset.meta["n_trajectories_valid"]
                 cp_progress = args.checkpoint
             end
@@ -372,7 +467,8 @@ function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise, df_tr
         end
 
         if cp_progress >= args.checkpoint
-            save!(mgn, opt_state, df_train, df_valid, step, avg_loss / Float32(step / delta), cp_path)
+            save!(mgn, opt_state, df_train, df_valid, step,
+                avg_loss / Float32(step / delta), cp_path)
             avg_loss = 0.0f0
             cp_progress = 0
         end
@@ -408,8 +504,9 @@ Starts the evaluation process with the given configuration.
 - `num_rollouts = 10`: Number of trajectories that are simulated (from the test dataset).
 - `use_valid = true`: Whether the last checkpoint with the minimal validation loss should be used.
 """
-function eval_network(ds_path, cp_path::String, out_path::String, solver = nothing; start, stop, dt = nothing, saves, mse_steps, kws...)
-    args = Args(;kws...)
+function eval_network(ds_path, cp_path::String, out_path::String, solver = nothing;
+        start, stop, dt = nothing, saves, mse_steps, kws...)
+    args = Args(; kws...)
 
     if CUDA.functional() && args.use_cuda
         @info "Evaluating on CUDA GPU..."
@@ -427,7 +524,6 @@ function eval_network(ds_path, cp_path::String, out_path::String, solver = nothi
     clear_log(1, false)
     @info "Evaluation data loaded!"
 
-
     println("Building model...")
 
     quantities, e_norms, n_norms, o_norms = calc_norms(dataset, device, args)
@@ -438,13 +534,17 @@ function eval_network(ds_path, cp_path::String, out_path::String, solver = nothi
         outputs += dataset.meta["features"][tf]["dim"]
     end
 
-    mgn, _, _, _ = load(quantities, typeof(dims) <: AbstractArray ? length(dims) : dims, e_norms, n_norms, o_norms, outputs, args.mps, args.layer_size, args.hidden_layers, nothing, device, args.use_valid ? joinpath(cp_path, "valid") : cp_path)
+    mgn, _, _, _ = load(
+        quantities, typeof(dims) <: AbstractArray ? length(dims) : dims, e_norms,
+        n_norms, o_norms, outputs, args.mps, args.layer_size, args.hidden_layers,
+        nothing, device, args.use_valid ? joinpath(cp_path, "valid") : cp_path)
     Lux.testmode(mgn.st)
 
     clear_log(1, false)
     @info "Model built!"
 
-    eval_network!(solver, mgn, dataset, device, out_path, start, stop, dt, saves, mse_steps, args)
+    eval_network!(
+        solver, mgn, dataset, device, out_path, start, stop, dt, saves, mse_steps, args)
 end
 
 """
@@ -465,18 +565,19 @@ Initializes the network, performs evaluation for the given number of rollouts an
 - `mse_steps`: Time steps where the relative error is printed at.
 - `args`: Keyword arguments for configuring the evaluation.
 """
-function eval_network!(solver, mgn::GraphNetwork, dataset::Dataset, device::Function, out_path, start, stop, dt, saves, mse_steps, args::Args)
+function eval_network!(solver, mgn::GraphNetwork, dataset::Dataset, device::Function,
+        out_path, start, stop, dt, saves, mse_steps, args::Args)
     local traj_ops = Dict{Tuple{Int, String}, Array{Float32, 3}}()
     local errors = Dict{Tuple{Int, String}, Array{Float32, 2}}()
     local timesteps = Dict{Tuple{Int, String}, Array{Float32, 1}}()
     local cells = Dict{Tuple{Int, String}, Array{Int32, 3}}()
 
-    for ti in 1:args.num_rollouts
+    for ti in 1:(args.num_rollouts)
         println("Rollout trajectory $ti...")
         data, meta = next_trajectory!(dataset, device; types_noisy = args.types_noisy)
 
         initial_state = Dict{String, AbstractArray}(
-            [typeof(v) <: AbstractArray ? (k, v[:, :, 1]) : (k, v) for (k,v) in data]
+            [typeof(v) <: AbstractArray ? (k, v[:, :, 1]) : (k, v) for (k, v) in data]
         )
         for k in keys(initial_state)
             if endswith(k, ".ev")
@@ -485,23 +586,37 @@ function eval_network!(solver, mgn::GraphNetwork, dataset::Dataset, device::Func
         end
 
         val_mask = Float32.(map(x -> x in args.types_updated, data["node_type"][:, :, 1]))
-        val_mask = repeat(val_mask, sum(size(data[field], 1) for field in meta["target_features"]), 1) |> device
+        val_mask = repeat(
+            val_mask, sum(size(data[field], 1) for field in meta["target_features"]), 1) |>
+                   device
 
-        inflow_mask = repeat(data["node_type"][:, :, 1] .== 1, sum(size(data[field], 1) for field in meta["target_features"]), 1) |> device
+        inflow_mask = repeat(data["node_type"][:, :, 1] .== 1,
+            sum(size(data[field], 1) for field in meta["target_features"]), 1) |> device
 
-        node_type, senders, receivers, edge_features = create_base_graph(data, meta["features"]["node_type"]["data_max"], meta["features"]["node_type"]["data_min"], device)
+        node_type, senders, receivers, edge_features = create_base_graph(
+            data, meta["features"]["node_type"]["data_max"],
+            meta["features"]["node_type"]["data_min"], device)
 
-        fields = deleteat!(copy(dataset.meta["feature_names"]), findall(x -> x == "node_type" || x == "mesh_pos" || x == "cells", dataset.meta["feature_names"]))
+        fields = deleteat!(copy(dataset.meta["feature_names"]),
+            findall(x -> x == "node_type" || x == "mesh_pos" || x == "cells",
+                dataset.meta["feature_names"]))
 
         target_dict = Dict{String, Int32}()
         for tf in meta["target_features"]
             target_dict[tf] = meta["features"][tf]["dim"]
         end
 
-        sol_u, sol_t = rollout(solver, mgn, initial_state, fields, meta, dataset.meta["target_features"], target_dict, node_type, edge_features, senders, receivers, val_mask, inflow_mask, data, start, stop, dt, saves)
-        
-        prediction = cat(sol_u..., dims = 3)
-        error = mean((prediction - vcat([data[field][:, :, 1:length(saves)] for field in meta["target_features"]]...)) .^ 2; dims = 2)
+        sol_u, sol_t = rollout(
+            solver, mgn, initial_state, fields, meta, dataset.meta["target_features"],
+            target_dict, node_type, edge_features, senders, receivers,
+            val_mask, inflow_mask, data, start, stop, dt, saves)
+
+        prediction = cat(sol_u...; dims = 3)
+        error = mean(
+            (prediction -
+             vcat([data[field][:, :, 1:length(saves)] for field in meta["target_features"]]...)) .^
+            2;
+            dims = 2)
         timesteps[(ti, "timesteps")] = sol_t
 
         @info "Rollout trajectory $ti completed!"
@@ -514,12 +629,14 @@ function eval_network!(solver, mgn::GraphNetwork, dataset::Dataset, device::Func
         end
 
         traj_ops[(ti, "mesh_pos")] = cpu_device()(data["mesh_pos"])
-        traj_ops[(ti, "gt")] = cpu_device()(vcat([data[field] for field in meta["target_features"]]...))
+        traj_ops[(ti, "gt")] = cpu_device()(vcat([data[field]
+                                                  for field in meta["target_features"]]...))
         traj_ops[(ti, "prediction")] = cpu_device()(prediction)
         errors[(ti, "error")] = cpu_device()(error[:, 1, :])
     end
-    
-    eval_path = joinpath(out_path, isnothing(solver) ? "derivative_training" : lowercase("$(nameof(typeof(solver)))"))
+
+    eval_path = joinpath(out_path,
+        isnothing(solver) ? "derivative_training" : lowercase("$(nameof(typeof(solver)))"))
     mkpath(eval_path)
     h5open(joinpath(eval_path, "trajectories.h5"), "w") do f
         for i in 1:maximum(getfield.(keys(traj_ops), 1))

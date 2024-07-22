@@ -33,7 +33,7 @@ types_noisy = [0]
 # Optimiser parameters #
 ########################
 
-learning_rate = 1f-4
+learning_rate = 1.0f-4
 opt = Adam(learning_rate)
 
 #########################
@@ -44,8 +44,6 @@ ds_path = "data/CylinderFlow/datasets"
 chk_path = "data/CylinderFlow/chk"
 eval_path = "data/CylinderFlow/eval"
 
-
-
 #################
 # Train network #
 #################
@@ -53,19 +51,24 @@ eval_path = "data/CylinderFlow/eval"
 # with DerivativeTraining
 
 train_network(
-    noise, opt, ds_path, chk_path; mps = message_steps, layer_size = layer_size, hidden_layers = hidden_layers, batchsize = batch,
-    epochs = epo, steps = Int(ns), use_cuda = cuda, checkpoint = cp, norm_steps = 1000, types_updated = types_updated,
-    types_noisy = types_noisy, training_strategy = DerivativeTraining(), solver_valid = Euler(), solver_valid_dt = 0.01f0
+    noise, opt, ds_path, chk_path; mps = message_steps, layer_size = layer_size,
+    hidden_layers = hidden_layers, batchsize = batch,
+    epochs = epo, steps = Int(ns), use_cuda = cuda, checkpoint = cp,
+    norm_steps = 1000, types_updated = types_updated,
+    types_noisy = types_noisy, training_strategy = DerivativeTraining(),
+    solver_valid = Euler(), solver_valid_dt = 0.01f0
 )
 
 # with SolverTraining
 
 train_network(
-    noise, opt, ds_path, chk_path; mps = message_steps, layer_size = layer_size, hidden_layers = hidden_layers, batchsize = batch, epochs = epo,
-    steps = Int(ns), use_cuda = cuda, checkpoint = 10, norm_steps = 1000, types_updated = types_updated, types_noisy = types_noisy,
-    training_strategy = SolverTraining(0.0f0, 0.01f0, 5.99f0, Euler(); adaptive = false, tstops = 0.0f0:0.01f0:5.99f0)
+    noise, opt, ds_path, chk_path; mps = message_steps, layer_size = layer_size,
+    hidden_layers = hidden_layers, batchsize = batch, epochs = epo,
+    steps = Int(ns), use_cuda = cuda, checkpoint = 10, norm_steps = 1000,
+    types_updated = types_updated, types_noisy = types_noisy,
+    training_strategy = SolverTraining(
+        0.0f0, 0.01f0, 5.99f0, Euler(); adaptive = false, tstops = 0.0f0:0.01f0:5.99f0)
 )
-
 
 ####################
 # Evaluate network #
@@ -74,13 +77,17 @@ train_network(
 # with Euler (fixed timestep)
 
 eval_network(
-    ds_path, chk_path, eval_path, Euler(); start = 0.0f0, stop = 5.99f0, dt = 0.01f0, saves = 0.0f0:0.01f0:5.99f0,
-    mse_steps = collect(0.0f0:1.0f0:5.99f0), mps = message_steps, layer_size = layer_size, hidden_layers = hidden_layers, use_cuda=cuda
+    ds_path, chk_path, eval_path, Euler(); start = 0.0f0,
+    stop = 5.99f0, dt = 0.01f0, saves = 0.0f0:0.01f0:5.99f0,
+    mse_steps = collect(0.0f0:1.0f0:5.99f0), mps = message_steps, layer_size = layer_size,
+    hidden_layers = hidden_layers, use_cuda = cuda
 )
 
 # with Tsit5 (adaptive timestep)
 
 eval_network(
-    ds_path, chk_path, eval_path, Tsit5(); start = 0.0f0, stop = 5.99f0, saves = 0.0f0:0.01f0:5.99f0,
-    mse_steps = collect(0.0f0:1.0f0:5.99f0), mps = message_steps, layer_size = layer_size, hidden_layers = hidden_layers, use_cuda=cuda
+    ds_path, chk_path, eval_path, Tsit5(); start = 0.0f0,
+    stop = 5.99f0, saves = 0.0f0:0.01f0:5.99f0,
+    mse_steps = collect(0.0f0:1.0f0:5.99f0), mps = message_steps, layer_size = layer_size,
+    hidden_layers = hidden_layers, use_cuda = cuda
 )
