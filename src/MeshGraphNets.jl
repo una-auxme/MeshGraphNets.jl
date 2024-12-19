@@ -394,7 +394,7 @@ function train_mgn!(mgn::GraphNetwork, opt_state, ds_train::Dataset, ds_valid::D
                             (:min_validation_loss, min_validation_loss),
                             (:last_validation_loss, last_validation_loss)])
                     if !isnothing(args.wandb_logger)
-                        Wandb.log(args.wandb_logger, Dict("train_loss" => l))
+                        Wandb.log(args.wandb_logger, Dict("train_loss" => sum(losses)))
                     end
                 else
                     update!(pr, step + datapoint;
