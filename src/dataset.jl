@@ -15,21 +15,14 @@ import Random: seed!, shuffle
 include("strategies.jl")
 
 """
-    Dataset(file, file_valid, meta, ch, ch_valid, data, data_valid, cs, current, current_valid)
+    Dataset(meta, datafile, lock)
 
 Data structure for the training, evaluation and test data inside a dataset.
 
 ## Arguments
-- `file`: Path of training or test data file (depending on the function call to [load_dataset](@ref)).
-- `file_valid`: Path of validation data file.
 - `meta`: Metadata of the dataset.
-- `ch`: Channel that reads trajectories from the data file.
-- `ch_valid`: Channel that reads trajectories from the validation data file.
-- `data`: Dictionary that stores trajectories that were already read from the data file.
-- `data_valid`: Dictionary that stores trajectories that were already read from the validation data file.
-- `cs`: Size of the data channels.
-- `current`: Index of current trajectory.
-- `current_valid`: Index of current validation trajectory.
+- `datafile`: Path of datafile.
+- `lock`: Used to prevent simultaneous acces to the datafile.
 """
 struct Dataset
     meta::Dict{String, Any}
@@ -37,6 +30,16 @@ struct Dataset
     lock::ReentrantLock
 end
 
+"""
+    Dataset(datafile, metafile, args)
+
+Creates a [Dataset](@ref) with the given files.
+
+## Arguments
+- `datafile`: Path of datafile.
+- `metafile`: Path of metadata file.
+- `args`: Arguments of the framework.
+"""
 function Dataset(datafile::String, metafile::String, args)
     if !isfile(datafile)
         throw(ArgumentError("Invalid datafile: $datafile"))
@@ -58,6 +61,16 @@ function Dataset(datafile::String, metafile::String, args)
     Dataset(meta, datafile, ReentrantLock())
 end
 
+"""
+    Dataset(split, path, args)
+
+Creates a [Dataset](@ref) with the given split type from the files of the given path.
+
+## Arguments
+- `split`: Symbol representing the type of data; possible values are: `[:train, :valid, :test]`.
+- `path`: Path to the data and metadata file.
+- `args`: Arguments of the framework.
+"""
 function Dataset(split::Symbol, path::String, args)
     if split != :train && split != :valid && split != :test
         throw(ArgumentError("Invalid symbol for dataset: $split. Possible values are [:train, :valid, :test]"))
@@ -109,7 +122,7 @@ function MLUtils.getobs!(buffer, ds::Dataset, idx)
     for fn in ds.meta["feature_names"]
         alloc_traj!(buffer, ds, fn)
 
-        match_data = match_keys!(buffer, ds, key, fn)
+        match_data = match_keys(ds, key, fn)
 
         set_traj_data!(buffer, match_data, ds, fn)
     end
@@ -324,7 +337,7 @@ function alloc_traj!(traj_dict::Dict{String, Any}, ds::Dataset, fn::String)
     end
 end
 
-function match_keys!(traj_dict::Dict{String, Any}, ds::Dataset, key::String, fn::String)
+function match_keys(ds::Dataset, key::String, fn::String)
     if haskey(ds.meta["features"][fn], "split") && ds.meta["features"][fn]["split"]
         rx = Regex(replace(
             replace(replace(ds.meta["features"][fn]["key"], "[" => "\\["),
@@ -345,7 +358,7 @@ function match_keys!(traj_dict::Dict{String, Any}, ds::Dataset, key::String, fn:
             traj = file[key]
             rx_match = eachmatch.(rx, keys(traj))
             deleteat!(rx_match, findall(x -> length(collect(x)) == 0, rx_match))
-            matches = unique(getfield.(collect.(rx_match)[1], :match))
+            matches = unique(getfield.(getindex.(collect.(rx_match), 1), :match))
             for m in matches
                 match_data[m] = traj[m]
                 if haskey(ds.meta["features"][fn], "has_ev") &&
@@ -408,8 +421,15 @@ function set_traj_data!(traj_dict::Dict{String, Any}, match_data, ds::Dataset, f
 
             fn_k = occursin(".ev", m) ? "$fn.ev" : fn
 
-            idx_node = typeof(idx) <: AbstractArray ? dims_to_li(traj_dict["dims"], idx) :
-                       idx
+            if typeof(idx) <: AbstractArray
+                if length(idx) > 1
+                    idx_node = dims_to_li(traj_dict["dims"], idx)
+                else
+                    idx_node = idx
+                end
+            else
+                idx_node = idx
+            end
             if ds.meta["features"][fn]["type"] == "dynamic"
                 if ndims(data) == 2
                     traj_dict[fn_k][coord, idx_node, :] = data[
@@ -443,26 +463,37 @@ function set_edges!(traj_dict::Dict{String, Any}, ds::Dataset, key::String)
                         throw(ArgumentError("The metadata \"type\" for metadata \"edges\" was defined as \"cells\", but no metadata \"key\" for the datafile was given."))
                     end
                     edge_key = ds.meta["edges"]["key"]
+                    if !haskey(traj, edge_key)
+                        throw(ArgumentError("The metadata \"key\" for metadata \"edges\", defined as \"$edge_key\", was not found in the datafile."))
+                    end
                     if endswith(ds.datafile, ".jld2")
-                        traj_dict["cells"] = file[key][edge_key]
+                        traj_dict["cells"] = traj[edge_key]
                     else
                         traj_dict["cells"] = Base.read(traj, edge_key)
                     end
                 elseif edge_type == "dims"
-                    traj_dict["edges"] = hcat(sort(create_edges(
+                    traj_dict["edges"] = create_edges(
                         traj_dict["dims"], traj_dict["node_type"],
                         haskey(ds.meta, "no_edges_node_types") ?
-                        ds.meta["no_edges_node_types"] : []))...)
+                        ds.meta["no_edges_node_types"] : [])
                 elseif edge_type == "custom"
                     if !haskey(ds.meta["edges"], "key")
-                        throw(ArgumentError("The metadata \"type\" for metadata \"edges\" was defined as \"cells\", but no metadata \"key\" for the datafile was given."))
+                        throw(ArgumentError("The metadata \"type\" for metadata \"edges\" was defined as \"custom\", but no metadata \"key\" for the datafile was given."))
                     end
-                    traj_dict["edges"] = hcat(sort(read_edges(file[key],
-                        ds.meta["edges"]["key"], traj_dict["node_type"],
+                    edge_key = ds.meta["edges"]["key"]
+                    if !haskey(traj, edge_key)
+                        throw(ArgumentError("The metadata \"key\" for metadata \"edges\", defined as \"$edge_key\", was not found in the datafile."))
+                    end
+                    if endswith(ds.datafile, ".jld2")
+                        edges = traj[edge_key]
+                    else
+                        edges = Base.read(traj, edge_key)
+                    end
+                    traj_dict["edges"] = parse_custom_edges(edges, traj_dict["node_type"],
                         haskey(ds.meta, "no_edges_node_types") ?
                         ds.meta["no_edges_node_types"] : [],
                         haskey(ds.meta, "exclude_node_indices") ?
-                        ds.meta["exclude_node_indices"] : []))...)
+                        ds.meta["exclude_node_indices"] : [])
                 else
                     throw(ArgumentError("The metadata \"type\" of metadata \"edges\" is invalid. Possible values are: [\"cells\" for cell-type edge structures, \"dims\" for fixed edges along the dimensions, \"custom\" for custom edges]"))
                 end
@@ -477,30 +508,70 @@ function set_edges!(traj_dict::Dict{String, Any}, ds::Dataset, key::String)
 end
 
 """
-    create_edges(dims, node_type)
+    create_edges(dims, node_type, excluded_node_types)
 
-Creates a mesh with the given dimensions
+Creates a two-dimensional array with the first dimension as the two connected nodes and the second dimensions as the number of edges.
+Depending on the length of the given dimensions the edges are created differently:
+
+## 1D
+
+Nodes are connected via node IDs in ascending order, i.e. for four nodes with indices `[1, 2, 3, 4]`:
+
+```
+2×3 Matrix{Int64}:
+ 1  2  3
+ 2  3  4
+
+1 --- 2 --- 3 --- 4
+ ```
+
+## 2D
+
+2D is not supported yet.
+
+## 3D
+
+Nodes are connected along the dimensions based on the [LinearIndex](@ref) of the dimensional index, i.e.:
+
+```
+dims = [2, 2, 2]
+3-element Vector{Int64}:
+ 2
+ 2
+ 2
+
+li = LinearIndices(Tuple(dims))
+2×2×2 LinearIndices{3, Tuple{Base.OneTo{Int64}, Base.OneTo{Int64}, Base.OneTo{Int64}}}:
+[:, :, 1] =
+ 1  3
+ 2  4
+
+[:, :, 2] =
+ 5  7
+ 6  8
+
+  7 -------- 8
+ /|         /|
+3 -------- 4 |
+| |        | |
+| 5 - - - -| 6
+|/         |/
+1 -------- 2
+```
+
 
 ## Arguments
 - `dims`: Array with the dimensions of the mesh.
-- `node_type`: Array of node types from the data file.
+- `node_type`: Array of node types from the datafile.
 - `excluded_node_types`: Vector of node types that should not be connected with edges.
 
 ## Returns
-- Vector of connected node pair indices (as vectors).
+- Two-dimensional array of edges as pairs of node indices.
 """
-function create_edges(dims, node_type, no_edges_node_types)
+function create_edges(dims, node_type, excluded_node_types)
     li = LinearIndices(Tuple(dims))
     edges = Vector{Vector{Int32}}()
 
-    #################################################
-    # 1D-Meshes are connected in order by their id  #
-    #                                               #
-    # 2D-Meshes are not supported yet               #
-    #                                               #
-    # 3D-Meshes are connected in order by their id, #
-    # starting the count from z then y and then x   #
-    #################################################
     if length(dims) == 1
         for i in 1:(dims[1] - 1)
             push!(edges, [i, i + 1])
@@ -513,7 +584,7 @@ function create_edges(dims, node_type, no_edges_node_types)
         function add_edge!(edges, x, y, z, cond, shift)
             if cond
                 if node_type[1, li[x + shift[1], y + shift[2], z + shift[3]], 1] ∉
-                   no_edges_node_types
+                   excluded_node_types
                     push!(
                         edges, [li[x, y, z], li[x + shift[1], y + shift[2], z + shift[3]]])
                 end
@@ -523,7 +594,7 @@ function create_edges(dims, node_type, no_edges_node_types)
         for x in 1:dim_x
             for y in 1:dim_y
                 for z in 1:dim_z
-                    if node_type[1, li[x, y, z], 1] ∉ no_edges_node_types
+                    if node_type[1, li[x, y, z], 1] ∉ excluded_node_types
                         add_edge!(edges, x, y, z, x != dim_x, [1, 0, 0])
                         add_edge!(edges, x, y, z, y != dim_y, [0, 1, 0])
                         add_edge!(edges, x, y, z, z != dim_z, [0, 0, 1])
@@ -537,40 +608,33 @@ function create_edges(dims, node_type, no_edges_node_types)
         end
     end
 
-    return edges
+    return hcat(sort(edges)...)
 end
 
 """
-    read_edges(traj::Group, node_type, no_edges_node_types::Vector{Int}, exclude_node_indices::Vector{Int})
+    parse_custom_edges(edges, node_type, no_edges_node_types, exclude_node_indices)
 
-    Read edges from trajectory group.
+Parses the edges that were read from the datafile. The format is a vector of pairs of node indices that represent edges.
 
-    ## Arguments
+## Arguments
+- `edges`: Vector of pairs of node indices.
+- `node_type`: Array of node types from the datafile.
+- `excluded_node_types`: Vector of node types that should not be connected with edges.
+- `exclude_node_indices`: Vector of node indices that should not be connected with edges.
 
-    - `traj`: HDF5 group containing this trajectory's data.
-    - `node_type`: Array of node types from the data file.
-    - `excluded_node_types`: Vector of node types that should not be connected with edges.
-    - `exclude_node_indices`: Vector of node indices that should not be connected with edges.
-
-    ## Returns
-
-    - Vector of connected node pair indices (as vectors).
+## Returns
+- Two-dimensional array of edges as pairs of node indices.
 """
-function read_edges(
-        traj::Group, edge_key, node_type, no_edges_node_types, exclude_node_indices)
-    if !haskey(traj, edge_key)
-        throw(KeyError(
-            "Key '$(edge_key)' not found in trajectory group '$(HDF5.name(traj))'"))
-    end
-    edges = read_dataset(traj, edge_key)
+function parse_custom_edges(edges, node_type, no_edges_node_types, exclude_node_indices)
     exclude_indices = findall(x -> x ∈ no_edges_node_types, node_type)
     exclude_indices = vcat(exclude_indices, exclude_node_indices)
-    filter!(x -> x[1] ∉ exclude_indices && x[2] ∉ exclude_indices, edges)
+    filtered_edges = filter(x -> x[1] ∉ exclude_indices && x[2] ∉ exclude_indices, edges)
     edge_vec = Vector{Vector{Int32}}()
-    for edge in edges
+    for edge in filtered_edges
         push!(edge_vec, [edge[1], edge[2]])
     end
-    return edge_vec
+
+    return hcat(sort(edge_vec)...)
 end
 
 """

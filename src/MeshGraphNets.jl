@@ -213,7 +213,7 @@ function calc_norms(dataset, device, args::Args)
 end
 
 """
-    train_network(noise_stddevs, opt, ds_path, cp_path; kws...)
+    train_network(opt, ds_path, cp_path; kws...)
 
 Starts the training process with the given configuration.
 
@@ -235,10 +235,12 @@ Starts the training process with the given configuration.
 - `max_norm_steps = 10f6`: Number of steps after which no more normalization stats are collected.
 - `types_updated = [0, 5]`: Array containing node types which are updated after each step.
 - `types_noisy = [0]`: Array containing node types which noise is added to.
+- `noise_stddevs = [0.0f0]`: Array containing the standard deviation of noise that is added to the target features.
 - `training_strategy = DerivativeTraining()`: Methods used for training. See [documentation](https://una-auxme.github.io/MeshGraphNets.jl/dev/strategies/).
 - `use_cuda = true`: Whether a GPU is used for training or not (if available). Currently only CUDA GPUs are supported.
 - `gpu_device = CUDA.device()`: Current CUDA device (aka GPU). See *nvidia-smi* for reference.
 - `cell_idxs = [0]`: Indices of cells that are plotted during validation (if enabled).
+- `use_valid = true`: Whether the last checkpoint of validation should be used, last training checkpoint otherwise.
 - `solver_valid = Tsit5()`: Which solver should be used for validation during training.
 - `solver_valid_dt = nothing`: If set, the solver for validation will use fixed timesteps.
 - `wandb_logger` = nothing: If set, a [Wandb](https://github.com/avik-pal/Wandb.jl) WandbLogger will be used for logging the training.
@@ -312,24 +314,23 @@ function train_network(opt, ds_path, cp_path; kws...)
     print("\u1b[1G")
 
     min_validation_loss = train_mgn!(
-        mgn, opt_state, ds_train, ds_valid, df_train, df_valid, device, cp_path, args)
+        mgn, opt_state, ds_train, ds_valid, df_train, df_valid, cp_path, args)
 
     return mgn, min_validation_loss
 end
 
 """
-    train_mgn!(mgn, opt_state, dataset, noise, df_train, df_valid, device, cp_path, args)
+    train_mgn!(mgn, opt_state, ds_train, ds_valid, df_train, df_valid, cp_path, args)
 
 Initializes the network and performs the training loop.
 
 ## Arguments
 - `mgn`: [GraphNetwork](@ref) that should be trained.
 - `opt_state`: State of the optimiser.
-- `dataset`: Dataset containing the training, validation data and metadata.
-- `noise`: Noise that is added to the node types specified in `args`.
+- `ds_train`: Dataset containing the training data and metadata.
+- `ds_valid`: Dataset containing the validation data and metadata.
 - `df_train`: [DataFrames.jl](https://github.com/JuliaData/DataFrames.jl) DataFrame that stores the train losses at the checkpoints.
 - `df_valid`: [DataFrames.jl](https://github.com/JuliaData/DataFrames.jl) DataFrame that stores the validation losses at the checkpoints (only improvements are saved).
-- `device`: Device where the normaliser should be loaded (see [Lux GPU Management](https://lux.csail.mit.edu/dev/manual/gpu_management#gpu-management)).
 - `cp_path`: Path where checkpoints are saved.
 - `args`: Keyword arguments for configuring the training.
 
@@ -337,7 +338,7 @@ Initializes the network and performs the training loop.
 - Minimum of validation loss (for hyperparameter tuning).
 """
 function train_mgn!(mgn::GraphNetwork, opt_state, ds_train::Dataset, ds_valid::Dataset,
-        df_train, df_valid, device, cp_path, args::Args)
+        df_train, df_valid, cp_path, args::Args)
     checkpoint = length(df_train.step) > 0 ? last(df_train.step) : 0
     step = checkpoint
     cp_progress = 0
@@ -394,7 +395,7 @@ function train_mgn!(mgn::GraphNetwork, opt_state, ds_train::Dataset, ds_valid::D
                             (:min_validation_loss, min_validation_loss),
                             (:last_validation_loss, last_validation_loss)])
                     if !isnothing(args.wandb_logger)
-                        Wandb.log(args.wandb_logger, Dict("train_loss" => l))
+                        Wandb.log(args.wandb_logger, Dict("train_loss" => sum(losses)))
                     end
                 else
                     update!(pr, step + datapoint;
@@ -542,29 +543,27 @@ function eval_network(ds_path, cp_path::String, out_path::String, solver = nothi
     @info "Model built!"
 
     eval_network!(
-        solver, mgn, ds_test, device, out_path, start, stop, dt, saves, mse_steps, args)
+        solver, mgn, ds_test, out_path, start, stop, dt, saves, mse_steps)
 end
 
 """
-    eval_network!(solver, mgn, dataset, device, out_path, start, stop, dt, saves, mse_steps, args)
+    eval_network!(solver, mgn, ds_test, out_path, start, stop, dt, saves, mse_steps)
 
 Initializes the network, performs evaluation for the given number of rollouts and saves the results.
 
 ## Arguments
 - `solver`: Solver that is used for evaluating the system.
 - `mgn`: [GraphNetwork](@ref) that should be evaluated.
-- `dataset`: Dataset containing the test data and metadata.
-- `device`: Device where the normaliser should be loaded (see [Lux GPU Management](https://lux.csail.mit.edu/dev/manual/gpu_management#gpu-management)).
+- `ds_test`: Dataset containing the test data and metadata.
 - `out_path`: Path where the evaluated trajectories are saved at.
 - `start`: Start time of the simulation.
 - `stop`: End time of the simulation.
 - `dt`: If provided, changes the solver to use fixed step sizes.
 - `saves`: Time steps where the solution is saved at.
 - `mse_steps`: Time steps where the relative error is printed at.
-- `args`: Keyword arguments for configuring the evaluation.
 """
-function eval_network!(solver, mgn::GraphNetwork, ds_test::Dataset, device::Function,
-        out_path, start, stop, dt, saves, mse_steps, args::Args)
+function eval_network!(solver, mgn::GraphNetwork, ds_test::Dataset, out_path, start, stop,
+        dt, saves, mse_steps)
     local traj_ops = Dict{Tuple{Int, String}, Array{Float32, 3}}()
     local errors = Dict{Tuple{Int, String}, Array{Float32, 2}}()
     local timesteps = Dict{Tuple{Int, String}, Array{Float32, 1}}()
