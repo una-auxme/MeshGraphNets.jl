@@ -371,7 +371,7 @@ function match_keys(ds::Dataset, key::String, fn::String)
             traj = open_group(file, key)
             rx_match = eachmatch.(rx, keys(traj))
             deleteat!(rx_match, findall(x -> length(collect(x)) == 0, rx_match))
-            matches = unique(getfield.(collect.(rx_match)[1], :match))
+            matches = unique(getfield.(getindex.(collect.(rx_match), 1), :match))
             for m in matches
                 match_data[m] = Base.read(traj, m)
                 if haskey(ds.meta["features"][fn], "has_ev") &&
