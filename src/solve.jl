@@ -49,8 +49,12 @@ function rollout(solver, mgn::GraphNetwork, data, fields, meta, target_fields,
         [typeof(data[field]) <: AbstractArray ? (field, data[field][:, :, 1]) :
          (field, data[field]) for field in fields]
     )
+    re = nothing
+    if typeof(mgn.model) <: Flux.Chain
+        mgn.ps, re = Flux.destructure(mgn.model)
+    end
     prob = ODEProblem(ode_func_eval, x0, interval,
-        (mgn, mgn.ps, data, inputs, fields, meta, target_fields,
+        (mgn, mgn.ps, re, data, inputs, fields, meta, target_fields,
             target_dict, node_type, edge_features, senders, receivers,
             val_mask, inflow_mask, saves[2] - saves[1], pr))
     if isnothing(dt)
@@ -98,7 +102,7 @@ The parameter tuple contains the following variables:
 - See [ode_step](@ref).
 """
 function ode_func_train(x,
-        (mgn, ps, data, inputs, fields, meta, target_fields, target_dict, node_type,
+        (mgn, ps, re, data, inputs, fields, meta, target_fields, target_dict, node_type,
             edge_features, senders, receivers, val_mask, inflow_mask, strategy, pr),
         t)
     bx = Zygote.Buffer(x)
@@ -107,7 +111,7 @@ function ode_func_train(x,
                             for field in target_fields]...)[inflow_mask]
 
     return ode_step(bx,
-        (mgn, ps, inputs, fields, meta, target_fields, target_dict,
+        (mgn, ps, re, inputs, fields, meta, target_fields, target_dict,
             node_type, edge_features, senders, receivers, val_mask, pr),
         t)
 end
@@ -144,14 +148,14 @@ The parameter tuple contains the following variables:
 - See [ode_step](@ref).
 """
 function ode_func_eval(x,
-        (mgn, ps, data, inputs, fields, meta, target_fields, target_dict, node_type,
+        (mgn, ps, re, data, inputs, fields, meta, target_fields, target_dict, node_type,
             edge_features, senders, receivers, val_mask, inflow_mask, saves_dt, pr),
         t)
     x[inflow_mask] = vcat([data[field][:, :, floor(Int, t / saves_dt) + 1]
                            for field in target_fields]...)[inflow_mask]
 
     return ode_step(x,
-        (mgn, ps, inputs, fields, meta, target_fields, target_dict,
+        (mgn, ps, re, inputs, fields, meta, target_fields, target_dict,
             node_type, edge_features, senders, receivers, val_mask, pr),
         t)
 end
@@ -185,7 +189,7 @@ The parameter tuple contains the following variables:
 - Output of the ODE at the current timestep.
 """
 function ode_step(x,
-        (mgn, ps, inputs, fields, meta, target_fields, target_dict,
+        (mgn, ps, re, inputs, fields, meta, target_fields, target_dict,
             node_type, edge_features, senders, receivers, val_mask, pr),
         t)
     offset = 1
@@ -196,8 +200,12 @@ function ode_step(x,
 
     graph = build_graph(
         mgn, inputs, fields, 1, node_type, edge_features, senders, receivers)
-    output, st = mgn.model(graph, ps, mgn.st)
-    mgn.st = st
+    if isnothing(re)
+        output, st = mgn.model(graph, ps, mgn.st)
+        mgn.st = st
+    else
+        output = re(ps)(graph)
+    end
 
     indices = [meta["features"][tf]["dim"] for tf in target_fields]
 

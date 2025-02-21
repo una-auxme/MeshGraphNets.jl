@@ -52,7 +52,7 @@ function Dataset(datafile::String, metafile::String, args)
         throw(ArgumentError("Invalid file format for metafile: $metafile. Possible formats are [.json]"))
     end
 
-    meta = parse(Base.read(metafile), String)
+    meta = parse(Base.read(metafile, String))
     keys_traj = keystraj(datafile)
     meta["n_trajectories"] = length(keys_traj)
     meta["keys_trajectories"] = keys_traj

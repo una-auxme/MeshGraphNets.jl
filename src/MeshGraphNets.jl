@@ -8,6 +8,7 @@ module MeshGraphNets
 using GraphNetCore
 
 using CUDA
+using Flux
 using Lux, LuxCUDA
 using MLUtils
 using Optimisers
@@ -55,6 +56,7 @@ export train_network, eval_network, der_minmax, data_meanstd
     solver_valid_dt::Union{Nothing, Float32} = nothing
     wandb_logger::Union{Nothing, Wandb.WandbLogger} = nothing
     reset_valid::Bool = false
+    backend::Symbol = :Flux
 end
 
 """
@@ -270,14 +272,24 @@ function train_network(opt, ds_path, cp_path; kws...)
         device = cpu_device()
     end
 
+    if args.backend == :Lux
+        @info "Using Lux as backend..."
+        ml_module = Lux
+    elseif args.backend == :Flux
+        @info "Using Flux as backend..."
+        ml_module = Flux
+    else
+        throw(ArgumentError("Invalid backend specified. Possible values are: [:Lux, :Flux]"))
+    end
+
     @info "Training with $(typeof(args.training_strategy))..."
 
     println("Loading training data...")
     ds_train = Dataset(:train, ds_path, args)
-    ds_train.meta["device"] = device
     ds_train.meta["types_updated"] = args.types_updated
     ds_train.meta["types_noisy"] = args.types_noisy
     ds_train.meta["noise_stddevs"] = args.noise_stddevs
+    ds_train.meta["device"] = device
     ds_valid = Dataset(:valid, ds_path, args)
     ds_valid.meta["types_updated"] = args.types_updated
     ds_valid.meta["types_noisy"] = args.types_noisy
@@ -301,12 +313,20 @@ function train_network(opt, ds_path, cp_path; kws...)
     mgn, opt_state, df_train, df_valid = load(
         quantities, typeof(dims) <: AbstractArray ? length(dims) : dims,
         e_norms, n_norms, o_norms, outputs, args.mps,
-        args.layer_size, args.hidden_layers, opt, device, cp_path)
+        args.layer_size, args.hidden_layers, opt, device, cp_path, ml_module)
 
     if isnothing(opt_state)
-        opt_state = Optimisers.setup(opt, mgn.ps)
+        if args.backend == :Lux
+            opt_state = Optimisers.setup(opt, mgn.ps)
+        else
+            opt_state = Optimisers.setup(opt, mgn.model)
+        end
     end
-    Lux.trainmode(mgn.st)
+    if args.backend == :Lux
+        Lux.trainmode(mgn.st)
+    else
+        Flux.trainmode!(mgn.model)
+    end
 
     clear_log(1, false)
     @info "Model built!"
@@ -382,8 +402,16 @@ function train_mgn!(mgn::GraphNetwork, opt_state, ds_train::Dataset, ds_valid::D
 
                 if step + datapoint > args.norm_steps
                     for i in eachindex(gs)
-                        opt_state, ps = Optimisers.update(opt_state, mgn.ps, gs[i])
-                        mgn.ps = ps
+                        if args.backend == :Lux || args.training_strategy isa SolverStrategy
+                            opt_state, ps = Optimisers.update(opt_state, mgn.ps, gs[i])
+                            mgn.ps = ps
+                            if args.backend == :Flux
+                                mgn.model = Flux.destructure(mgn.model)[2](mgn.ps)
+                            end
+                        else
+                            opt_state, nm = Optimisers.update!(opt_state, mgn.model, gs[i])
+                            mgn.model = nm
+                        end
                     end
                     update!(pr, step + datapoint;
                         showvalues = [
@@ -424,7 +452,7 @@ function train_mgn!(mgn::GraphNetwork, opt_state, ds_train::Dataset, ds_valid::D
                     pr_solver = ProgressUnknown(;
                         desc = "Trajectory $(traj_idx)/$(length(valid_loader)): ",
                         showspeed = true)
-                    ve, g, p = validation_step(args.training_strategy,
+                    ve = validation_step(args.training_strategy,
                         (
                             mgn, data_valid, ds_valid.meta, delta, args.solver_valid,
                             args.solver_valid_dt, fields, data_valid["node_type"],
@@ -512,6 +540,16 @@ function eval_network(ds_path, cp_path::String, out_path::String, solver = nothi
         device = cpu_device()
     end
 
+    if args.backend == :Lux
+        @info "Using Lux as backend..."
+        ml_module = Lux
+    elseif args.backend == :Flux
+        @info "Using Flux as backend..."
+        ml_module = Flux
+    else
+        throw(ArgumentError("Invalid backend specified. Possible values are: [:Lux, :Flux]"))
+    end
+
     println("Loading evaluation data...")
     ds_test = Dataset(:test, ds_path, args)
     ds_test.meta["device"] = device
@@ -536,8 +574,13 @@ function eval_network(ds_path, cp_path::String, out_path::String, solver = nothi
     mgn, _, _, _ = load(
         quantities, typeof(dims) <: AbstractArray ? length(dims) : dims, e_norms,
         n_norms, o_norms, outputs, args.mps, args.layer_size, args.hidden_layers,
-        nothing, device, args.use_valid ? joinpath(cp_path, "valid") : cp_path)
-    Lux.testmode(mgn.st)
+        nothing, device, args.use_valid ? joinpath(cp_path, "valid") : cp_path, ml_module)
+
+    if typeof(mgn.model) <: Lux.Chain
+        Lux.testmode(mgn.st)
+    elseif typeof(mgn.model) <: Flux.Chain
+        Flux.testmode!(mgn)
+    end
 
     clear_log(1, false)
     @info "Model built!"
