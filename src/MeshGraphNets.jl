@@ -610,7 +610,7 @@ function eval_network!(solver, mgn::GraphNetwork, ds_test::Dataset, out_path, st
     local traj_ops = Dict{Tuple{Int, String}, Array{Float32, 3}}()
     local errors = Dict{Tuple{Int, String}, Array{Float32, 2}}()
     local timesteps = Dict{Tuple{Int, String}, Array{Float32, 1}}()
-    local cells = Dict{Tuple{Int, String}, Array{Int32, 3}}()
+    local edges = Dict{Tuple{Int, String}, Array{Int32, 2}}()
 
     test_loader = DataLoader(ds_test; batchsize = -1, buffer = false, parallel = true)
 
@@ -654,38 +654,26 @@ function eval_network!(solver, mgn::GraphNetwork, ds_test::Dataset, out_path, st
                                                   for field in ds_test.meta["target_features"]]...))
         traj_ops[(ti, "prediction")] = cpu_device()(prediction)
         errors[(ti, "error")] = cpu_device()(error[:, 1, :])
+        edges[(ti, "edges")] = cpu_device()(permutedims(hcat(
+            data["senders"], data["receivers"])))
+        break
     end
 
     eval_path = joinpath(out_path,
         isnothing(solver) ? "derivative_training" : lowercase("$(nameof(typeof(solver)))"))
     mkpath(eval_path)
-    h5open(joinpath(eval_path, "trajectories.h5"), "w") do f
-        for i in 1:maximum(getfield.(keys(traj_ops), 1))
-            create_group(f, string(i))
-        end
+    jldopen(joinpath(eval_path, "trajectories.jld2"), "w") do f
         for (key, value) in traj_ops
-            g = open_group(f, string(key[1]))
-            sub_g = create_group(g, key[2])
-            sub_g["data"] = reshape(value, length(value))
-            sub_g["size"] = collect(size(value))
+            f["trajectory_$(key[1])/$(key[2])"] = value
         end
         for (key, value) in errors
-            g = open_group(f, string(key[1]))
-            sub_g = create_group(g, key[2])
-            sub_g["data"] = reshape(value, length(value))
-            sub_g["size"] = collect(size(value))
+            f["trajectory_$(key[1])/$(key[2])"] = value
         end
         for (key, value) in timesteps
-            g = open_group(f, string(key[1]))
-            sub_g = create_group(g, key[2])
-            sub_g["data"] = reshape(value, length(value))
-            sub_g["size"] = collect(size(value))
+            f["trajectory_$(key[1])/$(key[2])"] = value
         end
-        for (key, value) in cells
-            g = open_group(f, string(key[1]))
-            sub_g = create_group(g, key[2])
-            sub_g["data"] = reshape(value, length(value))
-            sub_g["size"] = collect(size(value))
+        for (key, value) in edges
+            f["trajectory_$(key[1])/$(key[2])"] = value
         end
     end
 
