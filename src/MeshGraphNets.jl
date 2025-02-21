@@ -32,7 +32,7 @@ include("dataset.jl")
 
 export SolverTraining, MultipleShooting, DerivativeTraining
 
-export train_network, eval_network, der_minmax, data_meanstd
+export train_network, eval_network, data_minmax, data_meanstd
 
 @kwdef mutable struct Args
     mps::Integer = 15
