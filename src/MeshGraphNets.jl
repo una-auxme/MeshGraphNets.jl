@@ -441,6 +441,8 @@ function train_mgn!(mgn::GraphNetwork, opt_state, ds_train::Dataset, ds_valid::D
             tmp_loss = 0.0f0
 
             if step > args.norm_steps && cp_progress >= args.checkpoint
+                push!(df_train, [step, avg_loss / Float32(step / delta)])
+
                 traj_idx = 1
                 valid_error = 0.0f0
                 pr_valid = Progress(ds_valid.meta["n_trajectories"];
@@ -479,18 +481,14 @@ function train_mgn!(mgn::GraphNetwork, opt_state, ds_train::Dataset, ds_valid::D
                 end
 
                 if valid_error / ds_valid.meta["n_trajectories"] < min_validation_loss
-                    save!(mgn, opt_state, df_train, df_valid, step,
-                        valid_error / ds_valid.meta["n_trajectories"],
-                        joinpath(cp_path, "valid"); is_training = false)
+                    push!(df_valid, [step, valid_error / ds_valid.meta["n_trajectories"]])
+                    save!(mgn, opt_state, df_train, df_valid,
+                        step, joinpath(cp_path, "valid"))
                     min_validation_loss = valid_error / ds_valid.meta["n_trajectories"]
-                    cp_progress = args.checkpoint
                 end
                 last_validation_loss = valid_error / ds_valid.meta["n_trajectories"]
-            end
 
-            if cp_progress >= args.checkpoint
-                save!(mgn, opt_state, df_train, df_valid, step,
-                    avg_loss / Float32(step / delta), cp_path)
+                save!(mgn, opt_state, df_train, df_valid, step, cp_path)
                 avg_loss = 0.0f0
                 cp_progress = 0
             end
@@ -650,7 +648,7 @@ function eval_network!(solver, mgn::GraphNetwork, ds_test::Dataset, out_path, st
         end
 
         traj_ops[(ti, "mesh_pos")] = cpu_device()(data["mesh_pos"])
-        traj_ops[(ti, "gt")] = cpu_device()(vcat([data[field]
+        traj_ops[(ti, "gt")] = cpu_device()(vcat([data[field][:, :, 1:size(prediction, 3)]
                                                   for field in ds_test.meta["target_features"]]...))
         traj_ops[(ti, "prediction")] = cpu_device()(prediction)
         errors[(ti, "error")] = cpu_device()(error[:, 1, :])

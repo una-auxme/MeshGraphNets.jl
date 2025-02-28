@@ -90,7 +90,7 @@ function data_minmax(path)
                 if ddiff_min < result["target|$tf"][1]
                     result["target|$tf"][1] = ddiff_min
                 end
-                if ddiff_max > result[tf][2]
+                if ddiff_max > result["target|$tf"][2]
                     result["target|$tf"][2] = ddiff_max
                 end
             end
