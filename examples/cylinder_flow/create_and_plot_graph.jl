@@ -440,46 +440,46 @@ function create_and_plot_graph(
     plot_graph(graph; selected_keys = selected_keys, pos_key = pos_key)
 end
 
-if !isdefined(Base, :interactive) || !Base.interactive
-    #########################
-    # Paths and filenames  #
-    #########################
+# if !isdefined(Base, :interactive) || !Base.interactive
+#     #########################
+#     # Paths and filenames  #
+#     #########################
 
-    # Path to the example directory
-    path = "examples/cylinder_flow"
+#     # Path to the example directory
+#     path = "examples/cylinder_flow"
 
-    # Name of the file to be loaded
-    file = "test_single_trajectory.jld2"
+#     # Name of the file to be loaded
+#     file = "test_single_trajectory.jld2"
 
-    ###################
-    # Load data       #
-    ###################
+#     ###################
+#     # Load data       #
+#     ###################
 
-    # Open the JLD2 file and load metadata
-    # The metadata contains important information about the simulation
-    datafile = jldopen(joinpath(path, file), "r")
-    meta = JSON.parse(Base.read(joinpath(path, "meta.json"), String))
+#     # Open the JLD2 file and load metadata
+#     # The metadata contains important information about the simulation
+#     datafile = jldopen(joinpath(path, file), "r")
+#     meta = JSON.parse(Base.read(joinpath(path, "meta.json"), String))
 
-    #############################
-    # Analyze trajectory       #
-    #############################
+#     #############################
+#     # Analyze trajectory       #
+#     #############################
 
-    # Name of the trajectory to be analyzed
-    trajectory = "trajectory_1"
+#     # Name of the trajectory to be analyzed
+#     trajectory = "trajectory_1"
 
-    # Time step for analysis
-    # Specifies the time at which data points are evaluated
-    time_step = 1
+#     # Time step for analysis
+#     # Specifies the time at which data points are evaluated
+#     time_step = 1
 
-    # List of attributes to be used for visualization
-    selected_ordered_attributes = [:Node, :mesh_pos, :pressure, :velocity]
+#     # List of attributes to be used for visualization
+#     selected_ordered_attributes = [:Node, :mesh_pos, :pressure, :velocity]
 
-    ########################
-    # Generate and plot graph #
-    ########################
+#     ########################
+#     # Generate and plot graph #
+#     ########################
 
-    # The function `create_and_plot_graph` generates a graph from the loaded data
-    # and visualizes it.
-    create_and_plot_graph(
-        datafile, trajectory, meta, time_step, selected_ordered_attributes)
-end
+#     # The function `create_and_plot_graph` generates a graph from the loaded data
+#     # and visualizes it.
+#     create_and_plot_graph(
+#         datafile, trajectory, meta, time_step, selected_ordered_attributes)
+# end
