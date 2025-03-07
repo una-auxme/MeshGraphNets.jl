@@ -291,7 +291,7 @@ Creates and visualizes a graph from simulation data at a specific time step.
     - `MetaGraphsNext`:The created MetaGraph object for further analysis, or `nothing` in case of errors.
 """
 function create_and_plot_graph(
-        datafile::JLD2.JLDFile, trajectory::String, meta::Dict{String, Any}, time_step::Int,
+        datafile::JLD2.JLDFile, trajectory::String = "", meta::Dict{String, Any}, time_step::Int,
         selected_keys::Vector{Symbol} = Symbol[], pos_key::Symbol = :mesh_pos)
     # Validate that the requested time step is within bounds
     if time_step > meta["trajectory_length"]
@@ -308,7 +308,11 @@ function create_and_plot_graph(
     end
 
     # Access the trajectory data from the JLD2 file
-    data = datafile[trajectory]
+    if trajectory == ""
+        data = datafile
+    else
+        data = datafile[trajectory]
+    end
 
     # Extract unique node names using regex pattern matching
     # This finds all keys that match the pattern "node[digit]"
