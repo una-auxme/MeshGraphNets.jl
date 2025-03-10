@@ -88,24 +88,34 @@ md"Select trajectory"
 
 # ╔═╡ 05e0150b-edc4-4bf7-b2a5-b950aa825a5e
 begin
+    trajectory = "None"
     if datafile_path != nothing && datafile_path != "" && isfile(datafile_path) &&
        endswith(datafile_path, ".jld2")
         try
             global datafile = jldopen(datafile_path, "r")
             global meta = JSON.parse(Base.read("$(datafile_path_prefix)meta.json", String))
-            global time_steps = 1:meta["trajectory_length"]
         catch err
             println("An error occured when reading the file!")
             global datafile = Dict()
-            global time_steps = [-1]
         end
     else
         println("The given file is not a valid datafile! Please check the path.")
         global datafile = Dict()
-        global time_steps = [-1]
     end
-    available_keys = !isempty(datafile) ? keys(datafile) : ["None"]
-    @bind trajectory Select(available_keys)
+    available_keys = !isempty(datafile) ? vcat(["None"], sort(collect(keys(datafile)))) :
+                     ["None"]
+
+    @bind trajectory confirm(Select(available_keys), label = "Load Trajectory")
+end
+
+# ╔═╡ 9a35f1f1-18fd-41c2-b9b1-f47a1c8eb30a
+begin
+    if trajectory == "None"
+        global time_steps = ["None"]
+    else
+        global time_steps = 1:meta["trajectory_length"]
+    end
+    print()
 end
 
 # ╔═╡ 8d254382-7e36-4a5c-b18d-55f1f704a9be
@@ -119,7 +129,7 @@ md"Select node attributes to be displayed in the graph (selecting none will disp
 
 # ╔═╡ 2a7d98b0-f6b1-4a31-9386-08d5f30cea04
 # ╠═╡ show_logs = false
-if time_step != -1 && trajectory != "None"
+if time_step != "None" && trajectory != "None"
     f, g = create_and_plot_graph(datafile, trajectory, meta, time_step)
     node_attributes = Set{Symbol}()
     for idx in 1:nv(g)
@@ -138,7 +148,7 @@ end
 
 # ╔═╡ 7bb493f2-731b-4c9d-a1f6-a8de58c204e0
 # ╠═╡ show_logs = false
-if time_step != -1 && trajectory != "None"
+if time_step != "None" && trajectory != "None"
     run
     fig, graph = create_and_plot_graph(
         datafile, trajectory, meta, time_step, selected_attributes)
@@ -2429,6 +2439,7 @@ version = "1.4.1+2"
 # ╟─91dc8c52-b9a1-4423-88de-cde53ad36b80
 # ╟─eb8c7741-5bfb-47ce-9ba7-ad9a3141077f
 # ╟─05e0150b-edc4-4bf7-b2a5-b950aa825a5e
+# ╟─9a35f1f1-18fd-41c2-b9b1-f47a1c8eb30a
 # ╟─8d254382-7e36-4a5c-b18d-55f1f704a9be
 # ╟─c5b19694-afee-4ce5-a40d-63a86cf62290
 # ╟─a5f9a939-96fd-4d59-8fd3-96950ede9d81
