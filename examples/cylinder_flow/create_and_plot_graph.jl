@@ -296,14 +296,12 @@ function create_and_plot_graph(
     # Validate that the requested time step is within bounds
     if time_step > meta["trajectory_length"]
         println("Time step out of bounds.")
-        close(datafile)
         return nothing, nothing
     end
 
     # Ensure the position key exists in the metadata
     if String(pos_key) ∉ meta["feature_names"]
         println("Position key not found in meta.")
-        close(datafile)
         return nothing, nothing
     end
 
@@ -432,9 +430,6 @@ function create_and_plot_graph(
         graph[sender_symbol, receiver_symbol] = (
             graph = graph, vertexes = (sender_symbol, receiver_symbol))
     end
-
-    # Close the data file as it's no longer needed
-    close(datafile)
 
     # Create and display the interactive graph visualization
     fig = plot_graph(graph; selected_keys = selected_keys, pos_key = pos_key)
