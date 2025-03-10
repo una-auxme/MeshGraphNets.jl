@@ -437,7 +437,10 @@ function create_and_plot_graph(
     close(datafile)
 
     # Create and display the interactive graph visualization
-    plot_graph(graph; selected_keys = selected_keys, pos_key = pos_key)
+    fig = plot_graph(graph; selected_keys = selected_keys, pos_key = pos_key)
+
+    # Return the created graph for potential further analysis
+    return fig, graph
 end
 
 # if !isdefined(Base, :interactive) || !Base.interactive
@@ -480,6 +483,6 @@ end
 
 #     # The function `create_and_plot_graph` generates a graph from the loaded data
 #     # and visualizes it.
-#     create_and_plot_graph(
+#     graph = create_and_plot_graph(
 #         datafile, trajectory, meta, time_step, selected_ordered_attributes)
 # end
