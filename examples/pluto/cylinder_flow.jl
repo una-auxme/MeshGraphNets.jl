@@ -95,13 +95,17 @@ begin
             global meta = JSON.parse(Base.read("$(datafile_path_prefix)meta.json", String))
             global time_steps = 1:meta["trajectory_length"]
         catch err
-            println("The given file is not a valid datafile!")
+            println("An error occured when reading the file!")
+            global datafile = Dict()
+            global time_steps = [-1]
         end
     else
-        datafile = nothing
-        time_steps = []
+        println("The given file is not a valid datafile! Please check the path.")
+        global datafile = Dict()
+        global time_steps = [-1]
     end
-    @bind trajectory Select(keys(datafile))
+    available_keys = !isempty(datafile) ? keys(datafile) : ["None"]
+    @bind trajectory Select(available_keys)
 end
 
 # ╔═╡ 8d254382-7e36-4a5c-b18d-55f1f704a9be
@@ -115,7 +119,7 @@ md"Select node attributes to be displayed in the graph (selecting none will disp
 
 # ╔═╡ 2a7d98b0-f6b1-4a31-9386-08d5f30cea04
 # ╠═╡ show_logs = false
-if time_step != nothing && trajectory != nothing
+if time_step != -1 && trajectory != "None"
     f, g = create_and_plot_graph(datafile, trajectory, meta, time_step)
     node_attributes = Set{Symbol}()
     for idx in 1:nv(g)
@@ -128,11 +132,13 @@ if time_step != nothing && trajectory != nothing
 end
 
 # ╔═╡ d087e2c1-6db3-48a4-afd8-ee71c3849538
-@bind run PlutoUI.Button("Reset graph")
+if time_step != -1 && trajectory != "None"
+    @bind run PlutoUI.Button("Reset graph")
+end
 
 # ╔═╡ 7bb493f2-731b-4c9d-a1f6-a8de58c204e0
 # ╠═╡ show_logs = false
-if time_step != nothing && trajectory != nothing
+if time_step != -1 && trajectory != "None"
     run
     fig, graph = create_and_plot_graph(
         datafile, trajectory, meta, time_step, selected_attributes)
