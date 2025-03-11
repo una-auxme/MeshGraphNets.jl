@@ -1,5 +1,10 @@
 ### A Pluto.jl notebook ###
 # v0.20.4
+#
+# Copyright (c) 2023 Julian Trommer, Roman Küble
+# Licensed under the MIT license. See LICENSE file in the project root for details.
+#
+
 
 using Markdown
 using InteractiveUtils
@@ -34,7 +39,7 @@ using Graphs, MetaGraphsNext
 # ╔═╡ 340580d5-c4cc-4c1c-a5ce-7127db78269c
 begin
     import Downloads
-    url = "https://raw.githubusercontent.com/kueblero/MeshGraphNets.jl/pluto/examples/cylinder_flow/create_and_plot_graph.jl"
+    url = "https://raw.githubusercontent.com/una-auxme/MeshGraphNets.jl/pluto/examples/cylinder_flow/create_and_plot_graph.jl"
     Downloads.download(url, "create_and_plot_graph.jl")
     include("create_and_plot_graph.jl")
     print()
