@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2023 Julian Trommer
+# Copyright (c) 2023 Julian Trommer, Roman Küble
 # Licensed under the MIT license. See LICENSE file in the project root for details.
 #
 
