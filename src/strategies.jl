@@ -126,7 +126,7 @@ function _validation_step(t::Tuple, sim_interval, data_interval)
 
     error = mean((prediction - gt) .^ 2; dims = 3)
 
-    return mean(error[mask]), gt, prediction
+    return mean(error[mask])
 end
 
 ####################################################################
@@ -168,18 +168,23 @@ function train_step(strategy::SolverStrategy, t::Tuple)
     pr = ProgressUnknown(; desc = "Solver progress: ", showspeed = true)
     print("\n\n\n\n\n\n\n") # display solver progress after main progress
 
+    re = nothing
+    if typeof(mgn.model) <: Flux.Chain
+        mgn.ps, re = Flux.destructure(mgn.model)
+    end
+
     ff = ODEFunction{false}((x, p, t) -> ode_func_train(x,
-        (mgn, p, data, inputs, fields, meta, target_fields, target_dict, node_type,
+        (mgn, p, re, data, inputs, fields, meta,
+            target_fields, target_dict, node_type,
             edge_features, senders, receivers, val_mask, data["inflow_mask"], strategy, pr),
         t))
     prob = ODEProblem(ff, u0, (strategy.tstart, strategy.tstop), mgn.ps)
 
-    shoot_loss, back = Zygote.pullback(
+    shoot_loss, shoot_gs = Zygote.withgradient(
         ps -> train_loss(strategy,
             (prob, ps, u0, nothing, gt, val_mask, mgn.n_norm, target_fields,
                 [meta["features"][tf]["dim"] for tf in target_fields])),
         mgn.ps)
-    shoot_gs = back(one(shoot_loss))
 
     clear_log(7, false)
     return shoot_gs, shoot_loss

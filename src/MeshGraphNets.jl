@@ -8,6 +8,7 @@ module MeshGraphNets
 using GraphNetCore
 
 using CUDA
+using Flux
 using Lux, LuxCUDA
 using MLUtils
 using Optimisers
@@ -31,7 +32,7 @@ include("dataset.jl")
 
 export SolverTraining, MultipleShooting, DerivativeTraining
 
-export train_network, eval_network, der_minmax, data_meanstd
+export train_network, eval_network, data_minmax, data_meanstd
 
 @kwdef mutable struct Args
     mps::Integer = 15
@@ -55,6 +56,7 @@ export train_network, eval_network, der_minmax, data_meanstd
     solver_valid_dt::Union{Nothing, Float32} = nothing
     wandb_logger::Union{Nothing, Wandb.WandbLogger} = nothing
     reset_valid::Bool = false
+    backend::Symbol = :Flux
 end
 
 """
@@ -270,14 +272,24 @@ function train_network(opt, ds_path, cp_path; kws...)
         device = cpu_device()
     end
 
+    if args.backend == :Lux
+        @info "Using Lux as backend..."
+        ml_module = Lux
+    elseif args.backend == :Flux
+        @info "Using Flux as backend..."
+        ml_module = Flux
+    else
+        throw(ArgumentError("Invalid backend specified. Possible values are: [:Lux, :Flux]"))
+    end
+
     @info "Training with $(typeof(args.training_strategy))..."
 
     println("Loading training data...")
     ds_train = Dataset(:train, ds_path, args)
-    ds_train.meta["device"] = device
     ds_train.meta["types_updated"] = args.types_updated
     ds_train.meta["types_noisy"] = args.types_noisy
     ds_train.meta["noise_stddevs"] = args.noise_stddevs
+    ds_train.meta["device"] = device
     ds_valid = Dataset(:valid, ds_path, args)
     ds_valid.meta["types_updated"] = args.types_updated
     ds_valid.meta["types_noisy"] = args.types_noisy
@@ -301,12 +313,20 @@ function train_network(opt, ds_path, cp_path; kws...)
     mgn, opt_state, df_train, df_valid = load(
         quantities, typeof(dims) <: AbstractArray ? length(dims) : dims,
         e_norms, n_norms, o_norms, outputs, args.mps,
-        args.layer_size, args.hidden_layers, opt, device, cp_path)
+        args.layer_size, args.hidden_layers, opt, device, cp_path, ml_module)
 
     if isnothing(opt_state)
-        opt_state = Optimisers.setup(opt, mgn.ps)
+        if args.backend == :Lux
+            opt_state = Optimisers.setup(opt, mgn.ps)
+        else
+            opt_state = Optimisers.setup(opt, mgn.model)
+        end
     end
-    Lux.trainmode(mgn.st)
+    if args.backend == :Lux
+        Lux.trainmode(mgn.st)
+    else
+        Flux.trainmode!(mgn.model)
+    end
 
     clear_log(1, false)
     @info "Model built!"
@@ -382,8 +402,16 @@ function train_mgn!(mgn::GraphNetwork, opt_state, ds_train::Dataset, ds_valid::D
 
                 if step + datapoint > args.norm_steps
                     for i in eachindex(gs)
-                        opt_state, ps = Optimisers.update(opt_state, mgn.ps, gs[i])
-                        mgn.ps = ps
+                        if args.backend == :Lux || args.training_strategy isa SolverStrategy
+                            opt_state, ps = Optimisers.update(opt_state, mgn.ps, gs[i])
+                            mgn.ps = ps
+                            if args.backend == :Flux
+                                mgn.model = Flux.destructure(mgn.model)[2](mgn.ps)
+                            end
+                        else
+                            opt_state, nm = Optimisers.update!(opt_state, mgn.model, gs[i])
+                            mgn.model = nm
+                        end
                     end
                     update!(pr, step + datapoint;
                         showvalues = [
@@ -413,6 +441,8 @@ function train_mgn!(mgn::GraphNetwork, opt_state, ds_train::Dataset, ds_valid::D
             tmp_loss = 0.0f0
 
             if step > args.norm_steps && cp_progress >= args.checkpoint
+                push!(df_train, [step, avg_loss / Float32(step / delta)])
+
                 traj_idx = 1
                 valid_error = 0.0f0
                 pr_valid = Progress(ds_valid.meta["n_trajectories"];
@@ -424,7 +454,7 @@ function train_mgn!(mgn::GraphNetwork, opt_state, ds_train::Dataset, ds_valid::D
                     pr_solver = ProgressUnknown(;
                         desc = "Trajectory $(traj_idx)/$(length(valid_loader)): ",
                         showspeed = true)
-                    ve, g, p = validation_step(args.training_strategy,
+                    ve = validation_step(args.training_strategy,
                         (
                             mgn, data_valid, ds_valid.meta, delta, args.solver_valid,
                             args.solver_valid_dt, fields, data_valid["node_type"],
@@ -451,18 +481,14 @@ function train_mgn!(mgn::GraphNetwork, opt_state, ds_train::Dataset, ds_valid::D
                 end
 
                 if valid_error / ds_valid.meta["n_trajectories"] < min_validation_loss
-                    save!(mgn, opt_state, df_train, df_valid, step,
-                        valid_error / ds_valid.meta["n_trajectories"],
-                        joinpath(cp_path, "valid"); is_training = false)
+                    push!(df_valid, [step, valid_error / ds_valid.meta["n_trajectories"]])
+                    save!(mgn, opt_state, df_train, df_valid,
+                        step, joinpath(cp_path, "valid"))
                     min_validation_loss = valid_error / ds_valid.meta["n_trajectories"]
-                    cp_progress = args.checkpoint
                 end
                 last_validation_loss = valid_error / ds_valid.meta["n_trajectories"]
-            end
 
-            if cp_progress >= args.checkpoint
-                save!(mgn, opt_state, df_train, df_valid, step,
-                    avg_loss / Float32(step / delta), cp_path)
+                save!(mgn, opt_state, df_train, df_valid, step, cp_path)
                 avg_loss = 0.0f0
                 cp_progress = 0
             end
@@ -512,6 +538,16 @@ function eval_network(ds_path, cp_path::String, out_path::String, solver = nothi
         device = cpu_device()
     end
 
+    if args.backend == :Lux
+        @info "Using Lux as backend..."
+        ml_module = Lux
+    elseif args.backend == :Flux
+        @info "Using Flux as backend..."
+        ml_module = Flux
+    else
+        throw(ArgumentError("Invalid backend specified. Possible values are: [:Lux, :Flux]"))
+    end
+
     println("Loading evaluation data...")
     ds_test = Dataset(:test, ds_path, args)
     ds_test.meta["device"] = device
@@ -536,8 +572,13 @@ function eval_network(ds_path, cp_path::String, out_path::String, solver = nothi
     mgn, _, _, _ = load(
         quantities, typeof(dims) <: AbstractArray ? length(dims) : dims, e_norms,
         n_norms, o_norms, outputs, args.mps, args.layer_size, args.hidden_layers,
-        nothing, device, args.use_valid ? joinpath(cp_path, "valid") : cp_path)
-    Lux.testmode(mgn.st)
+        nothing, device, args.use_valid ? joinpath(cp_path, "valid") : cp_path, ml_module)
+
+    if typeof(mgn.model) <: Lux.Chain
+        Lux.testmode(mgn.st)
+    elseif typeof(mgn.model) <: Flux.Chain
+        Flux.testmode!(mgn)
+    end
 
     clear_log(1, false)
     @info "Model built!"
@@ -567,7 +608,7 @@ function eval_network!(solver, mgn::GraphNetwork, ds_test::Dataset, out_path, st
     local traj_ops = Dict{Tuple{Int, String}, Array{Float32, 3}}()
     local errors = Dict{Tuple{Int, String}, Array{Float32, 2}}()
     local timesteps = Dict{Tuple{Int, String}, Array{Float32, 1}}()
-    local cells = Dict{Tuple{Int, String}, Array{Int32, 3}}()
+    local edges = Dict{Tuple{Int, String}, Array{Int32, 2}}()
 
     test_loader = DataLoader(ds_test; batchsize = -1, buffer = false, parallel = true)
 
@@ -607,42 +648,30 @@ function eval_network!(solver, mgn::GraphNetwork, ds_test::Dataset, out_path, st
         end
 
         traj_ops[(ti, "mesh_pos")] = cpu_device()(data["mesh_pos"])
-        traj_ops[(ti, "gt")] = cpu_device()(vcat([data[field]
+        traj_ops[(ti, "gt")] = cpu_device()(vcat([data[field][:, :, 1:size(prediction, 3)]
                                                   for field in ds_test.meta["target_features"]]...))
         traj_ops[(ti, "prediction")] = cpu_device()(prediction)
         errors[(ti, "error")] = cpu_device()(error[:, 1, :])
+        edges[(ti, "edges")] = cpu_device()(permutedims(hcat(
+            data["senders"], data["receivers"])))
+        break
     end
 
     eval_path = joinpath(out_path,
         isnothing(solver) ? "derivative_training" : lowercase("$(nameof(typeof(solver)))"))
     mkpath(eval_path)
-    h5open(joinpath(eval_path, "trajectories.h5"), "w") do f
-        for i in 1:maximum(getfield.(keys(traj_ops), 1))
-            create_group(f, string(i))
-        end
+    jldopen(joinpath(eval_path, "trajectories.jld2"), "w") do f
         for (key, value) in traj_ops
-            g = open_group(f, string(key[1]))
-            sub_g = create_group(g, key[2])
-            sub_g["data"] = reshape(value, length(value))
-            sub_g["size"] = collect(size(value))
+            f["trajectory_$(key[1])/$(key[2])"] = value
         end
         for (key, value) in errors
-            g = open_group(f, string(key[1]))
-            sub_g = create_group(g, key[2])
-            sub_g["data"] = reshape(value, length(value))
-            sub_g["size"] = collect(size(value))
+            f["trajectory_$(key[1])/$(key[2])"] = value
         end
         for (key, value) in timesteps
-            g = open_group(f, string(key[1]))
-            sub_g = create_group(g, key[2])
-            sub_g["data"] = reshape(value, length(value))
-            sub_g["size"] = collect(size(value))
+            f["trajectory_$(key[1])/$(key[2])"] = value
         end
-        for (key, value) in cells
-            g = open_group(f, string(key[1]))
-            sub_g = create_group(g, key[2])
-            sub_g["data"] = reshape(value, length(value))
-            sub_g["size"] = collect(size(value))
+        for (key, value) in edges
+            f["trajectory_$(key[1])/$(key[2])"] = value
         end
     end
 
