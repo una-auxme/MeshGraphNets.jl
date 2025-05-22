@@ -8,7 +8,6 @@ module MeshGraphNets
 using GraphNetCore
 
 using CUDA
-using Flux
 using Lux, LuxCUDA
 using MLUtils
 using Optimisers
@@ -44,6 +43,7 @@ export train_network, eval_network, data_minmax, data_meanstd
     checkpoint::Integer = 10000
     norm_steps::Integer = 1000
     max_norm_steps::Integer = 10.0f6
+    types_inflow::Vector{Integer} = [4]
     types_updated::Vector{Integer} = [0, 5]
     types_noisy::Vector{Integer} = [0]
     noise_stddevs::Vector{Float32} = [0.0f0]
@@ -56,7 +56,7 @@ export train_network, eval_network, data_minmax, data_meanstd
     solver_valid_dt::Union{Nothing, Float32} = nothing
     wandb_logger::Union{Nothing, Wandb.WandbLogger} = nothing
     reset_valid::Bool = false
-    backend::Symbol = :Flux
+    ad::Symbol = :Zygote
 end
 
 """
@@ -82,11 +82,13 @@ function calc_norms(dataset, device, args::Args)
     if haskey(dataset.meta, "edges")
         if haskey(dataset.meta["edges"], "data_min") &&
            haskey(dataset.meta["edges"], "data_max")
-            e_norms = NormaliserOfflineMinMax(Float32(dataset.meta["edges"]["data_min"]),
+            e_norms = NormaliserOfflineMinMax(
+                Float32(dataset.meta["edges"]["data_min"]),
                 Float32(dataset.meta["edges"]["data_max"]))
         elseif haskey(dataset.meta["edges"], "data_mean") &&
                haskey(dataset.meta["edges"], "data_std")
-            e_norms = NormaliserOfflineMeanStd(Float32(dataset.meta["edges"]["data_mean"]),
+            e_norms = NormaliserOfflineMeanStd(
+                Float32(dataset.meta["edges"]["data_mean"]),
                 Float32(dataset.meta["edges"]["data_std"]))
         else
             e_norms = NormaliserOnline(
@@ -105,107 +107,83 @@ function calc_norms(dataset, device, args::Args)
         if feature == "mesh_pos" || feature == "cells"
             continue
         end
-        if getfield(
-            Base, Symbol(uppercasefirst(dataset.meta["features"][feature]["dtype"]))) ==
-           Bool
+        feature_meta = dataset.meta["features"][feature]
+
+        if getfield(Base, Symbol(uppercasefirst(feature_meta["dtype"]))) == Bool
             quantities += 1
             n_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0)
             if feature in dataset.meta["target_features"]
                 o_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0)
             end
-        elseif getfield(
-            Base, Symbol(uppercasefirst(dataset.meta["features"][feature]["dtype"]))) ==
-               Int32
-            if haskey(dataset.meta["features"][feature], "onehot") &&
-               dataset.meta["features"][feature]["onehot"]
-                quantities += dataset.meta["features"][feature]["data_max"] -
-                              dataset.meta["features"][feature]["data_min"] + 1
-                if haskey(dataset.meta["features"][feature], "target_min") &&
-                   haskey(dataset.meta["features"][feature], "target_max")
-                    n_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0,
-                        Float32(dataset.meta["features"][feature]["target_min"]),
-                        Float32(dataset.meta["features"][feature]["target_max"]))
-                    if feature in dataset.meta["target_features"]
-                        o_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0,
-                            Float32(dataset.meta["features"][feature]["target_min"]),
-                            Float32(dataset.meta["features"][feature]["target_max"]))
-                    end
-                else
-                    n_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0)
-                    if feature in dataset.meta["target_features"]
-                        o_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0)
-                    end
-                end
+        elseif getfield(Base, Symbol(uppercasefirst(feature_meta["dtype"]))) == Int32 &&
+               haskey(feature_meta, "onehot") && feature_meta["onehot"]
+            quantities += feature_meta["data_max"] - feature_meta["data_min"] + 1
+            # check for node feature norm
+            if haskey(feature_meta, "target_min") && haskey(feature_meta, "target_max")
+                n_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0,
+                    Float32(feature_meta["target_min"]),
+                    Float32(feature_meta["target_max"]))
             else
-                throw(ArgumentError("Int32 types that are not onehot types are not supported yet."))
+                n_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0)
+            end
+            # check for output feature norm
+            if feature in dataset.meta["target_features"]
+                if haskey(feature_meta, "output_target_min") &&
+                   haskey(feature_meta, "output_target_max")
+                    o_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0,
+                        Float32(feature_meta["output_target_min"]),
+                        Float32(feature_meta["output_target_max"]))
+                else
+                    o_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0)
+                end
             end
         else
-            quantities += dataset.meta["features"][feature]["dim"]
-            if haskey(dataset.meta["features"][feature], "data_min") &&
-               haskey(dataset.meta["features"][feature], "data_max")
-                if haskey(dataset.meta["features"][feature], "target_min") &&
-                   haskey(dataset.meta["features"][feature], "target_max")
+            quantities += feature_meta["dim"]
+            # check for node feature norm
+            if haskey(feature_meta, "data_min") && haskey(feature_meta, "data_max")
+                if haskey(feature_meta, "target_min") && haskey(feature_meta, "target_max")
                     n_norms[feature] = NormaliserOfflineMinMax(
-                        Float32(dataset.meta["features"][feature]["data_min"]),
-                        Float32(dataset.meta["features"][feature]["data_max"]),
-                        Float32(dataset.meta["features"][feature]["target_min"]),
-                        Float32(dataset.meta["features"][feature]["target_max"]))
-                    if feature in dataset.meta["target_features"]
-                        if haskey(dataset.meta["features"][feature], "output_min") &&
-                           haskey(dataset.meta["features"][feature], "output_max")
-                            o_norms[feature] = NormaliserOfflineMinMax(
-                                Float32(dataset.meta["features"][feature]["output_min"]),
-                                Float32(dataset.meta["features"][feature]["output_max"]),
-                                Float32(dataset.meta["features"][feature]["target_min"]),
-                                Float32(dataset.meta["features"][feature]["target_max"]))
-                        else
-                            o_norms[feature] = NormaliserOnline(
-                                dataset.meta["features"][feature]["dim"],
-                                device; max_acc = Float32(args.max_norm_steps))
-                        end
-                    end
+                        Float32(feature_meta["data_min"]),
+                        Float32(feature_meta["data_max"]),
+                        Float32(feature_meta["target_min"]),
+                        Float32(feature_meta["target_max"]))
                 else
                     n_norms[feature] = NormaliserOfflineMinMax(
-                        Float32(dataset.meta["features"][feature]["data_min"]),
-                        Float32(dataset.meta["features"][feature]["data_max"]))
-                    if feature in dataset.meta["target_features"]
-                        if haskey(dataset.meta["features"][feature], "output_min") &&
-                           haskey(dataset.meta["features"][feature], "output_max")
-                            o_norms[feature] = NormaliserOfflineMinMax(
-                                Float32(dataset.meta["features"][feature]["output_min"]),
-                                Float32(dataset.meta["features"][feature]["output_max"]))
-                        else
-                            o_norms[feature] = NormaliserOnline(
-                                dataset.meta["features"][feature]["dim"],
-                                device; max_acc = Float32(args.max_norm_steps))
-                        end
-                    end
+                        Float32(feature_meta["data_min"]),
+                        Float32(feature_meta["data_max"]))
                 end
-            elseif haskey(dataset.meta["features"][feature], "data_mean") &&
-                   haskey(dataset.meta["features"][feature], "data_std")
+            elseif haskey(feature_meta, "data_mean") && haskey(feature_meta, "data_std")
                 n_norms[feature] = NormaliserOfflineMeanStd(
-                    Float32(dataset.meta["features"][feature]["data_mean"]),
-                    Float32(dataset.meta["features"][feature]["data_std"]))
-                if feature in dataset.meta["target_features"]
-                    if haskey(dataset.meta["features"][feature], "output_min") &&
-                       haskey(dataset.meta["features"][feature], "output_max")
-                        o_norms[feature] = NormaliserOfflineMeanStd(
-                            Float32(dataset.meta["features"][feature]["output_mean"]),
-                            Float32(dataset.meta["features"][feature]["output_std"]))
-                    else
-                        o_norms[feature] = NormaliserOnline(
-                            dataset.meta["features"][feature]["dim"],
-                            device; max_acc = Float32(args.max_norm_steps))
-                    end
-                end
+                    Float32(feature_meta["data_mean"]),
+                    Float32(feature_meta["data_std"]))
             else
                 n_norms[feature] = NormaliserOnline(
-                    dataset.meta["features"][feature]["dim"],
-                    device; max_acc = Float32(args.max_norm_steps))
-                if feature in dataset.meta["target_features"]
+                    feature_meta["dim"], device; max_acc = Float32(args.max_norm_steps))
+            end
+
+            # check for output feature norm
+            if feature in dataset.meta["target_features"]
+                if haskey(feature_meta, "output_min") && haskey(feature_meta, "output_max")
+                    if haskey(feature_meta, "output_target_min") &&
+                       haskey(feature_meta, "output_target_max")
+                        o_norms[feature] = NormaliserOfflineMinMax(
+                            Float32(feature_meta["output_min"]),
+                            Float32(feature_meta["output_max"]),
+                            Float32(feature_meta["output_target_min"]),
+                            Float32(feature_meta["output_target_max"]))
+                    else
+                        o_norms[feature] = NormaliserOfflineMinMax(
+                            Float32(feature_meta["output_min"]),
+                            Float32(feature_meta["output_max"]))
+                    end
+                elseif haskey(feature_meta, "output_mean") &&
+                       haskey(feature_meta, "output_std")
+                    o_norms[feature] = NormaliserOfflineMeanStd(
+                        Float32(feature_meta["output_mean"]),
+                        Float32(feature_meta["output_std"]))
+                else
                     o_norms[feature] = NormaliserOnline(
-                        dataset.meta["features"][feature]["dim"],
-                        device; max_acc = Float32(args.max_norm_steps))
+                        feature_meta["dim"], device; max_acc = Float32(args.max_norm_steps))
                 end
             end
         end
@@ -266,35 +244,38 @@ function train_network(opt, ds_path, cp_path; kws...)
         @info "Training on CUDA GPU..."
         CUDA.device!(args.gpu_device)
         CUDA.allowscalar(false)
-        device = gpu_device()
+        if args.ad == :Zygote
+            @info "Using Zygote as AD framework..."
+            device = gpu_device()
+        elseif args.ad == :Enzyme
+            throw(ArgumentError("Enzyme is not supported yet!"))
+            # @info "Using Enzyme (+ Reactant) as AD framework..."
+            # Reactant.set_default_backend("gpu")
+            # device = reactant_device()
+        else
+            throw(ArgumentError("Invalid AD framework. Possible values are: [:Zygote, :Enzyme]"))
+        end
     else
         @info "Training on CPU..."
         device = cpu_device()
-    end
-
-    if args.backend == :Lux
-        @info "Using Lux as backend..."
-        ml_module = Lux
-    elseif args.backend == :Flux
-        @info "Using Flux as backend..."
-        ml_module = Flux
-    else
-        throw(ArgumentError("Invalid backend specified. Possible values are: [:Lux, :Flux]"))
     end
 
     @info "Training with $(typeof(args.training_strategy))..."
 
     println("Loading training data...")
     ds_train = Dataset(:train, ds_path, args)
+    ds_train.meta["types_inflow"] = args.types_inflow
     ds_train.meta["types_updated"] = args.types_updated
     ds_train.meta["types_noisy"] = args.types_noisy
     ds_train.meta["noise_stddevs"] = args.noise_stddevs
     ds_train.meta["device"] = device
     ds_valid = Dataset(:valid, ds_path, args)
+    ds_valid.meta["types_inflow"] = args.types_inflow
     ds_valid.meta["types_updated"] = args.types_updated
     ds_valid.meta["types_noisy"] = args.types_noisy
     ds_valid.meta["noise_stddevs"] = args.noise_stddevs
     ds_valid.meta["device"] = device
+    ds_valid.meta["training_strategy"] = nothing
     clear_log(1, false)
     @info "Training data loaded!"
     Threads.nthreads() < 2 &&
@@ -310,23 +291,15 @@ function train_network(opt, ds_path, cp_path; kws...)
         outputs += ds_train.meta["features"][tf]["dim"]
     end
 
-    mgn, opt_state, df_train, df_valid = load(
+    mgn, train_state, df_train, df_valid = load(
         quantities, typeof(dims) <: AbstractArray ? length(dims) : dims,
         e_norms, n_norms, o_norms, outputs, args.mps,
-        args.layer_size, args.hidden_layers, opt, device, cp_path, ml_module)
+        args.layer_size, args.hidden_layers, opt, device, cp_path)
 
-    if isnothing(opt_state)
-        if args.backend == :Lux
-            opt_state = Optimisers.setup(opt, mgn.ps)
-        else
-            opt_state = Optimisers.setup(opt, mgn.model)
-        end
+    if isnothing(train_state)
+        train_state = Lux.Training.TrainState(mgn.model, mgn.ps, mgn.st, opt)
     end
-    if args.backend == :Lux
-        Lux.trainmode(mgn.st)
-    else
-        Flux.trainmode!(mgn.model)
-    end
+    Lux.trainmode(mgn.st)
 
     clear_log(1, false)
     @info "Model built!"
@@ -334,7 +307,7 @@ function train_network(opt, ds_path, cp_path; kws...)
     print("\u1b[1G")
 
     min_validation_loss = train_mgn!(
-        mgn, opt_state, ds_train, ds_valid, df_train, df_valid, cp_path, args)
+        mgn, train_state, ds_train, ds_valid, df_train, df_valid, cp_path, args)
 
     return mgn, min_validation_loss
 end
@@ -346,7 +319,7 @@ Initializes the network and performs the training loop.
 
 ## Arguments
 - `mgn`: [GraphNetwork](@ref) that should be trained.
-- `opt_state`: State of the optimiser.
+- `train_state`: TrainingState.
 - `ds_train`: Dataset containing the training data and metadata.
 - `ds_valid`: Dataset containing the validation data and metadata.
 - `df_train`: [DataFrames.jl](https://github.com/JuliaData/DataFrames.jl) DataFrame that stores the train losses at the checkpoints.
@@ -357,7 +330,7 @@ Initializes the network and performs the training loop.
 ## Returns
 - Minimum of validation loss (for hyperparameter tuning).
 """
-function train_mgn!(mgn::GraphNetwork, opt_state, ds_train::Dataset, ds_valid::Dataset,
+function train_mgn!(mgn::GraphNetwork, train_state, ds_train::Dataset, ds_valid::Dataset,
         df_train, df_valid, cp_path, args::Args)
     checkpoint = length(df_train.step) > 0 ? last(df_train.step) : 0
     step = checkpoint
@@ -370,7 +343,7 @@ function train_mgn!(mgn::GraphNetwork, opt_state, ds_train::Dataset, ds_valid::D
     last_validation_loss = min_validation_loss
 
     pr = Progress(args.epochs * args.steps; desc = "Training progress: ",
-        dt = 1.0, barlen = 50, start = checkpoint, showspeed = true)
+        dt = 0.1, barlen = 50, start = checkpoint, showspeed = true)
 
     local tmp_loss = 0.0f0
     local avg_loss = 0.0f0
@@ -388,7 +361,7 @@ function train_mgn!(mgn::GraphNetwork, opt_state, ds_train::Dataset, ds_valid::D
         for data in train_loader
             delta = get_delta(args.training_strategy, data["trajectory_length"])
 
-            for datapoint in 1:delta
+            for (data_idx, datapoint) in enumerate(delta)
                 train_tuple = init_train_step(args.training_strategy,
                     (mgn, data, ds_train.meta, fields,
                         ds_train.meta["target_features"], data["node_type"],
@@ -396,52 +369,41 @@ function train_mgn!(mgn::GraphNetwork, opt_state, ds_train::Dataset, ds_valid::D
                         datapoint, data["mask"], data["val_mask"]),
                     train_tuple_additional)
 
-                gs, losses = train_step(args.training_strategy, train_tuple)
+                if step + data_idx > args.norm_steps
+                    gs, losses = train_step(args.training_strategy, train_tuple)
+                    Lux.Training.apply_gradients!(train_state, gs[1])
+                    mgn.ps = train_state.parameters
+                    tmp_loss += sum(losses)
 
-                tmp_loss += sum(losses)
-
-                if step + datapoint > args.norm_steps
-                    for i in eachindex(gs)
-                        if args.backend == :Lux || args.training_strategy isa SolverStrategy
-                            opt_state, ps = Optimisers.update(opt_state, mgn.ps, gs[i])
-                            mgn.ps = ps
-                            if args.backend == :Flux
-                                mgn.model = Flux.destructure(mgn.model)[2](mgn.ps)
-                            end
-                        else
-                            opt_state, nm = Optimisers.update!(opt_state, mgn.model, gs[i])
-                            mgn.model = nm
-                        end
-                    end
-                    update!(pr, step + datapoint;
+                    update!(pr, step + data_idx;
                         showvalues = [
-                            (:train_step, "$(step + datapoint)/$(args.epochs*args.steps)"),
+                            (:train_step, "$(step + data_idx)/$(args.epochs*args.steps)"),
                             (:train_loss, sum(losses)),
                             (:checkpoint,
                                 length(df_train.step) > 0 ? last(df_train.step) : 0),
-                            (:data_interval, delta == 1 ? "1:end" : 1:delta),
+                            (:data_interval,
+                                delta isa Vector ?
+                                "$datapoint : [$(delta[1]),...,$(delta[end])]" : delta),
                             (:min_validation_loss, min_validation_loss),
                             (:last_validation_loss, last_validation_loss)])
                     if !isnothing(args.wandb_logger)
                         Wandb.log(args.wandb_logger, Dict("train_loss" => sum(losses)))
                     end
                 else
-                    update!(pr, step + datapoint;
+                    gs, losses = train_step(args.training_strategy, train_tuple)
+                    update!(pr, step + data_idx;
                         showvalues = [
-                            (:step, "$(step + datapoint)/$(args.epochs*args.steps)"),
+                            (:step, "$(step + data_idx)/$(args.epochs*args.steps)"),
                             (:loss, "acc norm stats..."), (:checkpoint, 0)])
                 end
             end
 
-            cp_progress += delta
-            step += delta
-            tmp_loss /= delta
-
-            avg_loss += tmp_loss
-            tmp_loss = 0.0f0
+            cp_progress += length(delta)
+            step += length(delta)
+            tmp_loss /= length(delta)
 
             if step > args.norm_steps && cp_progress >= args.checkpoint
-                push!(df_train, [step, avg_loss / Float32(step / delta)])
+                push!(df_train, [step, avg_loss / Float32(step / length(delta))])
 
                 traj_idx = 1
                 valid_error = 0.0f0
@@ -456,7 +418,7 @@ function train_mgn!(mgn::GraphNetwork, opt_state, ds_train::Dataset, ds_valid::D
                         showspeed = true)
                     ve = validation_step(args.training_strategy,
                         (
-                            mgn, data_valid, ds_valid.meta, delta, args.solver_valid,
+                            mgn, data_valid, ds_valid.meta, length(delta), args.solver_valid,
                             args.solver_valid_dt, fields, data_valid["node_type"],
                             data_valid["edge_features"], data_valid["senders"],
                             data_valid["receivers"], data_valid["mask"],
@@ -472,7 +434,7 @@ function train_mgn!(mgn::GraphNetwork, opt_state, ds_train::Dataset, ds_valid::D
                             (:valid_loss, "$(valid_error / traj_idx)")])
                     traj_idx += 1
                 end
-                clear_log(9)
+                clear_log(6)
 
                 if !isnothing(args.wandb_logger)
                     Wandb.log(args.wandb_logger,
@@ -482,13 +444,13 @@ function train_mgn!(mgn::GraphNetwork, opt_state, ds_train::Dataset, ds_valid::D
 
                 if valid_error / ds_valid.meta["n_trajectories"] < min_validation_loss
                     push!(df_valid, [step, valid_error / ds_valid.meta["n_trajectories"]])
-                    save!(mgn, opt_state, df_train, df_valid,
+                    save!(mgn, train_state, df_train, df_valid,
                         step, joinpath(cp_path, "valid"))
                     min_validation_loss = valid_error / ds_valid.meta["n_trajectories"]
                 end
                 last_validation_loss = valid_error / ds_valid.meta["n_trajectories"]
 
-                save!(mgn, opt_state, df_train, df_valid, step, cp_path)
+                save!(mgn, train_state, df_train, df_valid, step, cp_path)
                 avg_loss = 0.0f0
                 cp_progress = 0
             end
@@ -538,18 +500,9 @@ function eval_network(ds_path, cp_path::String, out_path::String, solver = nothi
         device = cpu_device()
     end
 
-    if args.backend == :Lux
-        @info "Using Lux as backend..."
-        ml_module = Lux
-    elseif args.backend == :Flux
-        @info "Using Flux as backend..."
-        ml_module = Flux
-    else
-        throw(ArgumentError("Invalid backend specified. Possible values are: [:Lux, :Flux]"))
-    end
-
     println("Loading evaluation data...")
     ds_test = Dataset(:test, ds_path, args)
+    ds_test.meta["types_inflow"] = args.types_inflow
     ds_test.meta["device"] = device
     ds_test.meta["training_strategy"] = nothing
     # dataset = load_dataset(ds_path, false)
@@ -572,13 +525,9 @@ function eval_network(ds_path, cp_path::String, out_path::String, solver = nothi
     mgn, _, _, _ = load(
         quantities, typeof(dims) <: AbstractArray ? length(dims) : dims, e_norms,
         n_norms, o_norms, outputs, args.mps, args.layer_size, args.hidden_layers,
-        nothing, device, args.use_valid ? joinpath(cp_path, "valid") : cp_path, ml_module)
+        nothing, device, args.use_valid ? joinpath(cp_path, "valid") : cp_path)
 
-    if typeof(mgn.model) <: Lux.Chain
-        Lux.testmode(mgn.st)
-    elseif typeof(mgn.model) <: Flux.Chain
-        Flux.testmode!(mgn)
-    end
+    Lux.testmode(mgn.st)
 
     clear_log(1, false)
     @info "Model built!"
@@ -606,7 +555,7 @@ Initializes the network, performs evaluation for the given number of rollouts an
 function eval_network!(solver, mgn::GraphNetwork, ds_test::Dataset, out_path, start, stop,
         dt, saves, mse_steps)
     local traj_ops = Dict{Tuple{Int, String}, Array{Float32, 3}}()
-    local errors = Dict{Tuple{Int, String}, Array{Float32, 2}}()
+    local errors = Dict{Tuple{Int, String}, Array{Float32, 1}}()
     local timesteps = Dict{Tuple{Int, String}, Array{Float32, 1}}()
     local edges = Dict{Tuple{Int, String}, Array{Int32, 2}}()
 
@@ -622,6 +571,9 @@ function eval_network!(solver, mgn::GraphNetwork, ds_test::Dataset, out_path, st
             target_dict[tf] = ds_test.meta["features"][tf]["dim"]
         end
 
+        gt = vcat([data[tf] for tf in ds_test.meta["target_features"]]...)[
+            :, :, 1:length(saves)]
+
         pr = ProgressUnknown(;
             desc = "Trajectory $ti/$(length(test_loader)): ", showspeed = true)
 
@@ -632,18 +584,13 @@ function eval_network!(solver, mgn::GraphNetwork, ds_test::Dataset, out_path, st
             saves, pr)
 
         prediction = cat(sol_u...; dims = 3)
-        error = mean(
-            (prediction -
-             vcat([data[field][:, :, 1:length(saves)]
-                   for field in ds_test.meta["target_features"]]...)) .^
-            2;
-            dims = 2)
+        error = cpu_device()(mean(abs2, prediction - gt; dims = (1, 2))[1, 1, :])
         timesteps[(ti, "timesteps")] = sol_t
 
         println("MSE of state prediction:")
         for horizon in mse_steps
-            err = mean(error[:, 1, findfirst(x -> x == horizon, saves)])
-            cum_err = mean(error[:, 1, 1:findfirst(x -> x == horizon, saves)])
+            err = error[findfirst(x -> x == horizon, saves)]
+            cum_err = mean(error[1:findfirst(x -> x == horizon, saves)])
             println("  Trajectory $ti | mse t=$(horizon): $err | cum_mse t=$(horizon): $cum_err | cum_rmse t=$(horizon): $(sqrt(cum_err))")
         end
 
@@ -651,7 +598,7 @@ function eval_network!(solver, mgn::GraphNetwork, ds_test::Dataset, out_path, st
         traj_ops[(ti, "gt")] = cpu_device()(vcat([data[field][:, :, 1:size(prediction, 3)]
                                                   for field in ds_test.meta["target_features"]]...))
         traj_ops[(ti, "prediction")] = cpu_device()(prediction)
-        errors[(ti, "error")] = cpu_device()(error[:, 1, :])
+        errors[(ti, "error")] = error
         edges[(ti, "edges")] = cpu_device()(permutedims(hcat(
             data["senders"], data["receivers"])))
         break

@@ -133,6 +133,9 @@ function MLUtils.getobs!(buffer, ds::Dataset, idx)
     buffer["mask"] = Int32.(findall(
         x -> x in ds.meta["types_updated"], buffer["node_type"][1, :, 1])) |>
                      ds.meta["device"]
+    buffer["inflow_mask"] = Int32.(findall(
+        x -> x in ds.meta["types_inflow"], buffer["node_type"][1, :, 1])) |>
+                            ds.meta["device"]
 
     buffer["val_mask"] = Float32.(map(
         x -> x in ds.meta["types_updated"], buffer["node_type"][:, :, 1]))
@@ -140,10 +143,6 @@ function MLUtils.getobs!(buffer, ds::Dataset, idx)
         buffer["val_mask"], sum(size(buffer[field], 1)
         for field in ds.meta["target_features"]), 1) |>
                          ds.meta["device"]
-
-    buffer["inflow_mask"] = repeat(buffer["node_type"][:, :, 1] .== 1,
-        sum(size(buffer[field], 1) for field in ds.meta["target_features"]), 1) |>
-                            ds.meta["device"]
 
     create_base_graph!(buffer, ds.meta["features"]["node_type"]["data_max"],
         ds.meta["features"]["node_type"]["data_min"], ds.meta["device"])
@@ -688,11 +687,11 @@ function preprocess!(data, noise_fields, noise_stddevs, types_noisy, ts, device)
     end
     for (i, nf) in enumerate(noise_fields)
         d = Normal(0.0f0, length(noise_stddevs) > 1 ? noise_stddevs[i] : noise_stddevs[1])
-        noise = rand(d, size(data[nf])) |> device
+        noise = rand(d, size(data[nf]))
 
         mask = findall(x -> x ∉ types_noisy, data["node_type"][1, :, 1])
-        noise[:, mask, :] .= 0
-        data[nf] += noise
+        noise[:, mask, :] .= 0.0f0
+        data[nf] += device(noise)
     end
 
     rng = MersenneTwister(1234)
@@ -701,7 +700,7 @@ function preprocess!(data, noise_fields, noise_stddevs, types_noisy, ts, device)
         if key == "edges" || length(data[key]) == 1 || size(data[key])[end] == 1
             continue
         end
-        if typeof(ts) <: DerivativeStrategy && ts.random
+        if ts.random
             if key != "dt"
                 data[key] = data[key][repeat([:], ndims(data[key]) - 1)...,
                     shuffle(rng,
