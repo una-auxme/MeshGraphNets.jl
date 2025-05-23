@@ -22,11 +22,13 @@ norm_steps = 1000
 cuda = true
 cp_derivative = 10000
 cp_solver = 10
+ad = :Zygote
 
 ########################
 # Node type parameters #
 ########################
 
+types_inflow = [4]
 types_updated = [0, 5]
 types_noisy = [0]
 noise_stddevs = [0.02f0]
@@ -35,8 +37,13 @@ noise_stddevs = [0.02f0]
 # Optimiser parameters #
 ########################
 
-learning_rate = 1.0f-4
-opt = Adam(learning_rate)
+learning_rate_derivative = 1.0f-4
+opt_derivative = Adam(learning_rate_derivative)
+# opt_derivative = nothing
+
+learning_rate_solver = 1.0f-2
+opt_solver = Adam(learning_rate_solver)
+# opt_solver = nothing
 
 #########################
 # Paths to data folders #
@@ -55,7 +62,7 @@ dt = 0.01f0
 tstop = 5.99f0
 
 # timesteps at which the mean squared error is calculated and printed during evaluation
-mse_steps = tstart:1.0f0:tstop
+mse_steps = vcat(collect(tstart:1.0f0:tstop), tstop)
 
 ###########
 # Solvers #
@@ -72,21 +79,21 @@ solver_eval_adaptive_timesteps = Tsit5()
 # with DerivativeTraining
 
 # train_network(
-#     opt, ds_path, chk_path; mps = message_steps, layer_size = layer_size,
+#     opt_derivative, ds_path, chk_path; mps = message_steps, layer_size = layer_size,
 #     hidden_layers = hidden_layers, batchsize = batch, epochs = epo, steps = Int(ns),
-#     use_cuda = cuda, checkpoint = cp_derivative, norm_steps = norm_steps,
+#     use_cuda = cuda, checkpoint = cp_derivative, norm_steps = 1000, types_inflow = types_inflow,
 #     types_updated = types_updated, types_noisy = types_noisy, noise_stddevs = noise_stddevs,
-#     training_strategy = DerivativeTraining()
+#     training_strategy = DerivativeTraining(), ad = ad
 # )
 
 # with SolverTraining
 
 train_network(
-    opt, ds_path, chk_path; mps = message_steps, layer_size = layer_size,
+    opt_solver, ds_path, chk_path; mps = message_steps, layer_size = layer_size,
     hidden_layers = hidden_layers, batchsize = batch, epochs = epo, steps = Int(ns),
-    use_cuda = cuda, checkpoint = cp_solver, norm_steps = norm_steps,
+    use_cuda = cuda, checkpoint = cp_solver, norm_steps = 1000, types_inflow = types_inflow,
     types_updated = types_updated, types_noisy = types_noisy, noise_stddevs = noise_stddevs,
-    training_strategy = SolverTraining(tstart, dt, tstop, solver_train)
+    training_strategy = SolverTraining(tstart, dt, tstop, solver_train), ad = ad
 )
 
 ####################
