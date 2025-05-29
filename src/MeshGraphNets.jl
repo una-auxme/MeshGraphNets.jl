@@ -418,7 +418,7 @@ function train_mgn!(mgn::GraphNetwork, train_state, ds_train::Dataset, ds_valid:
                         showspeed = true)
                     ve = validation_step(args.training_strategy,
                         (
-                            mgn, data_valid, ds_valid.meta, length(delta), args.solver_valid,
+                            mgn, data_valid, ds_valid.meta, length(get_delta(args.training_strategy, data_valid["trajectory_length"])), args.solver_valid,
                             args.solver_valid_dt, fields, data_valid["node_type"],
                             data_valid["edge_features"], data_valid["senders"],
                             data_valid["receivers"], data_valid["mask"],
