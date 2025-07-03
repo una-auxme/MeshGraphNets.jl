@@ -494,11 +494,12 @@ function set_edges!(traj_dict::Dict{String, Any}, ds::Dataset, key::String)
                     else
                         edges = Base.read(traj, edge_key)
                     end
-                    traj_dict["edges"] = parse_custom_edges(edges, traj_dict["node_type"],
-                        haskey(ds.meta, "no_edges_node_types") ?
-                        ds.meta["no_edges_node_types"] : [],
-                        haskey(ds.meta, "exclude_node_indices") ?
-                        ds.meta["exclude_node_indices"] : [])
+                    traj_dict["edges"] = edges
+                    # traj_dict["edges"] = parse_custom_edges(edges, traj_dict["node_type"],
+                    #     haskey(ds.meta, "no_edges_node_types") ?
+                    #     ds.meta["no_edges_node_types"] : [],
+                    #     haskey(ds.meta, "exclude_node_indices") ?
+                    #     ds.meta["exclude_node_indices"] : [])
                 else
                     throw(ArgumentError("The metadata \"type\" of metadata \"edges\" is invalid. Possible values are: [\"cells\" for cell-type edge structures, \"dims\" for fixed edges along the dimensions, \"custom\" for custom edges]"))
                 end
