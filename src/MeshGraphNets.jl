@@ -503,6 +503,7 @@ function eval_network(ds_path, cp_path::String, out_path::String, solver = nothi
     println("Loading evaluation data...")
     ds_test = Dataset(:test, ds_path, args)
     ds_test.meta["types_inflow"] = args.types_inflow
+    ds_test.meta["types_updated"] = args.types_updated
     ds_test.meta["device"] = device
     ds_test.meta["training_strategy"] = nothing
     # dataset = load_dataset(ds_path, false)
@@ -601,7 +602,6 @@ function eval_network!(solver, mgn::GraphNetwork, ds_test::Dataset, out_path, st
         errors[(ti, "error")] = error
         edges[(ti, "edges")] = cpu_device()(permutedims(hcat(
             data["senders"], data["receivers"])))
-        break
     end
 
     eval_path = joinpath(out_path,
