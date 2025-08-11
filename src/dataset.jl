@@ -211,6 +211,12 @@ function set_meta!(traj_dict::Dict{String, Any}, ds::Dataset, key::String)
                 end
                 close(file)
             end
+        elseif tl == -1
+            if length(dt) == 1
+                tl = length(range(0.0, dt * (tl - 1); step = dt))
+            else
+                tl = length(dt) - 1
+            end
         elseif !(typeof(tl) <: Integer)
             throw(ArgumentError("The metadata \"trajectory_length\" is invalid. Possible values are: [-1 (for inferring the length), Integer (for specifying the length), String (as key inside the datafile)]"))
         end
@@ -488,11 +494,12 @@ function set_edges!(traj_dict::Dict{String, Any}, ds::Dataset, key::String)
                     else
                         edges = Base.read(traj, edge_key)
                     end
-                    traj_dict["edges"] = parse_custom_edges(edges, traj_dict["node_type"],
-                        haskey(ds.meta, "no_edges_node_types") ?
-                        ds.meta["no_edges_node_types"] : [],
-                        haskey(ds.meta, "exclude_node_indices") ?
-                        ds.meta["exclude_node_indices"] : [])
+                    traj_dict["edges"] = edges
+                    # traj_dict["edges"] = parse_custom_edges(edges, traj_dict["node_type"],
+                    #     haskey(ds.meta, "no_edges_node_types") ?
+                    #     ds.meta["no_edges_node_types"] : [],
+                    #     haskey(ds.meta, "exclude_node_indices") ?
+                    #     ds.meta["exclude_node_indices"] : [])
                 else
                     throw(ArgumentError("The metadata \"type\" of metadata \"edges\" is invalid. Possible values are: [\"cells\" for cell-type edge structures, \"dims\" for fixed edges along the dimensions, \"custom\" for custom edges]"))
                 end
@@ -627,7 +634,7 @@ Parses the edges that were read from the datafile. The format is a vector of pai
 function parse_custom_edges(edges, node_type, no_edges_node_types, exclude_node_indices)
     exclude_indices = findall(x -> x ∈ no_edges_node_types, node_type)
     exclude_indices = vcat(exclude_indices, exclude_node_indices)
-    filtered_edges = filter(x -> x[1] ∉ exclude_indices && x[2] ∉ exclude_indices, edges)
+    filtered_edges = filter(x -> x[1] ∉ exclude_indices && x[2] ∉ exclude_indices, eachrow(edges))
     edge_vec = Vector{Vector{Int32}}()
     for edge in filtered_edges
         push!(edge_vec, [edge[1], edge[2]])

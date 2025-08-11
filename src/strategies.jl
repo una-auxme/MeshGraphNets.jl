@@ -454,6 +454,7 @@ end
 
 function validation_step(::DerivativeStrategy, t::Tuple)
     sim_interval = t[2]["dt"]
+    pop!(sim_interval)
     data_interval = 1:(length(sim_interval))
 
     return _validation_step(t, sim_interval, data_interval)

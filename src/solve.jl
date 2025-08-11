@@ -55,7 +55,7 @@ function rollout(solver, mgn::GraphNetwork, data, fields, meta, target_fields,
             target_dict, node_type, edge_features, senders, receivers,
             val_mask, inflow_mask, saves[2] - saves[1], pr))
     if isnothing(dt)
-        sol = solve(prob, solver; saveat = saves)
+        sol = solve(prob, solver; saveat = saves, tstops = saves)
     else
         sol = solve(prob, solver; adaptive = false, dt = dt, saveat = saves)
     end

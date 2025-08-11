@@ -418,7 +418,7 @@ function train_mgn!(mgn::GraphNetwork, train_state, ds_train::Dataset, ds_valid:
                         showspeed = true)
                     ve = validation_step(args.training_strategy,
                         (
-                            mgn, data_valid, ds_valid.meta, length(delta), args.solver_valid,
+                            mgn, data_valid, ds_valid.meta, length(get_delta(args.training_strategy, data_valid["trajectory_length"])), args.solver_valid,
                             args.solver_valid_dt, fields, data_valid["node_type"],
                             data_valid["edge_features"], data_valid["senders"],
                             data_valid["receivers"], data_valid["mask"],
@@ -503,6 +503,7 @@ function eval_network(ds_path, cp_path::String, out_path::String, solver = nothi
     println("Loading evaluation data...")
     ds_test = Dataset(:test, ds_path, args)
     ds_test.meta["types_inflow"] = args.types_inflow
+    ds_test.meta["types_updated"] = args.types_updated
     ds_test.meta["device"] = device
     ds_test.meta["training_strategy"] = nothing
     # dataset = load_dataset(ds_path, false)
@@ -601,7 +602,6 @@ function eval_network!(solver, mgn::GraphNetwork, ds_test::Dataset, out_path, st
         errors[(ti, "error")] = error
         edges[(ti, "edges")] = cpu_device()(permutedims(hcat(
             data["senders"], data["receivers"])))
-        break
     end
 
     eval_path = joinpath(out_path,
