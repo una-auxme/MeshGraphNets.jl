@@ -24,5 +24,5 @@ References for training strategies and the core package [*GraphNetCore.jl*](http
 MeshGraphNets.jl uses a mixed-license structure. Files adapted from Google
 DeepMind's MeshGraphNets implementation are licensed under Apache-2.0; the
 project-specific code, documentation, tests, configuration, and artwork are
-licensed under MIT. See the [License](@ref) page for the complete file-level
+licensed under MIT. See the [License](https://una-auxme.github.io/MeshGraphNets.jl/dev/license) page for the complete file-level
 boundary, links to the full license texts, and upstream attribution.
