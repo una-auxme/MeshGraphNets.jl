@@ -1,7 +1,6 @@
-#
 # Copyright (c) 2023 Julian Trommer
-# Licensed under the MIT license. See LICENSE file in the project root for details.
-#
+# SPDX-License-Identifier: MIT
+# See LICENSE for details.
 
 import Printf: @sprintf
 import Statistics: stdm
@@ -54,7 +53,8 @@ function der_minmax(path, is_training)
     n_traj = dataset.meta["n_trajectories"]
 
     for _ in 1:n_traj
-        data, meta = next_trajectory!(
+        data,
+        meta = next_trajectory!(
             dataset, cpu_device(); types_noisy = [], noise_stddevs = [], ts = nothing)
         dt = Float32(meta["dt"][2] - meta["dt"][1])
         for tf in target_features
@@ -75,7 +75,8 @@ function der_minmax(path, is_training)
     if is_training
         n_traj_valid = dataset.meta["n_trajectories_valid"]
         for _ in 1:n_traj_valid
-            data, meta = next_trajectory!(dataset, cpu_device(); types_noisy = [],
+            data,
+            meta = next_trajectory!(dataset, cpu_device(); types_noisy = [],
                 noise_stddevs = [], ts = nothing, is_training = false)
             dt = Float32(meta["dt"][2] - meta["dt"][1])
             for tf in target_features
@@ -171,7 +172,8 @@ function data_meanstd(path, is_training)
     end
 
     for _ in 1:n_traj
-        data, meta = next_trajectory!(
+        data,
+        meta = next_trajectory!(
             dataset, cpu_device(); types_noisy = [], noise_stddevs = [], ts = nothing)
 
         for f in features
@@ -192,7 +194,8 @@ function data_meanstd(path, is_training)
     if is_training
         n_traj_valid = dataset.meta["n_trajectories_valid"]
         for _ in 1:n_traj_valid
-            data, meta = next_trajectory!(dataset, cpu_device(); types_noisy = [],
+            data,
+            meta = next_trajectory!(dataset, cpu_device(); types_noisy = [],
                 noise_stddevs = [], ts = nothing, is_training = false)
 
             for f in features

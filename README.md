@@ -33,3 +33,14 @@ Examples from the original paper are implemented in the [examples folder](https:
 ## Citation
 
 Coming soon!
+
+## License
+
+This repository uses a mixed-license structure. The Julia adaptations of
+Google DeepMind's MeshGraphNets implementation and the CylinderFlow example
+are licensed under Apache-2.0; project-specific code, documentation, tests,
+configuration, and artwork are licensed under MIT. See the
+[license documentation](https://una-auxme.github.io/MeshGraphNets.jl/dev/license/)
+for the complete file-level boundary and the repository
+[`NOTICE`](https://github.com/una-auxme/MeshGraphNets.jl/blob/main/NOTICE) for
+upstream attribution and modification information.

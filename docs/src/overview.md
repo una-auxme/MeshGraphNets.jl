@@ -18,3 +18,11 @@ References for training strategies and the core package [*GraphNetCore.jl*](http
 - [Training Strategies](https://una-auxme.github.io/MeshGraphNets.jl/dev/strategies): Different training strategies that can be used for training.
 - [Utilities](https://una-auxme.github.io/MeshGraphNets.jl/dev/util): Utility functions for better user experience.
 - [GraphNetCore.jl](https://una-auxme.github.io/MeshGraphNets.jl/dev/graph_net_core): Documentation of the core package.
+
+## License
+
+MeshGraphNets.jl uses a mixed-license structure. Files adapted from Google
+DeepMind's MeshGraphNets implementation are licensed under Apache-2.0; the
+project-specific code, documentation, tests, configuration, and artwork are
+licensed under MIT. See the [License](@ref) page for the complete file-level
+boundary, links to the full license texts, and upstream attribution.

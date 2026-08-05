@@ -1,0 +1,4 @@
+SPDX-FileCopyrightText: 2020 DeepMind Technologies Limited
+SPDX-FileCopyrightText: 2023 Julian Trommer
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileComment: Adapted from Google DeepMind's MeshGraphNets CylinderFlow metadata and modified for MeshGraphNets.jl.
