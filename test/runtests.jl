@@ -1,7 +1,6 @@
-#
 # Copyright (c) 2023 Julian Trommer
-# Licensed under the MIT license. See LICENSE file in the project root for details.
-#
+# SPDX-License-Identifier: MIT
+# See LICENSE for details.
 
 using MeshGraphNets
 using Test

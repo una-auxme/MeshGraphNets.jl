@@ -1,7 +1,22 @@
+# Copyright 2020 DeepMind Technologies Limited. All Rights Reserved.
 #
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Modified from the original MeshGraphNets software for this Julia project.
 # Copyright (c) 2023 Julian Trommer
-# Licensed under the MIT license. See LICENSE file in the project root for details.
-#
+# Copyright (c) 2024 Leonard Heber
+# SPDX-License-Identifier: Apache-2.0
+# See LICENSE-APACHE and NOTICE for details.
 
 module MeshGraphNets
 
@@ -279,7 +294,9 @@ function train_network(noise_stddevs, opt, ds_path, cp_path; kws...)
         outputs += dataset.meta["features"][tf]["dim"]
     end
 
-    mgn, opt_state, df_train, df_valid = load(
+    mgn, opt_state,
+    df_train,
+    df_valid = load(
         quantities, typeof(dims) <: AbstractArray ? length(dims) : dims,
         e_norms, n_norms, o_norms, outputs, args.mps,
         args.layer_size, args.hidden_layers, opt, device, cp_path)
@@ -346,7 +363,8 @@ function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise,
     train_tuple_additional = prepare_training(args.training_strategy)
 
     for _ in checkpoint:delta:(args.steps * args.epochs)
-        data, meta = next_trajectory!(dataset, device; types_noisy = args.types_noisy,
+        data,
+        meta = next_trajectory!(dataset, device; types_noisy = args.types_noisy,
             noise_stddevs = noise, ts = args.training_strategy)
 
         mask = Int32.(findall(x -> x in args.types_updated, data["node_type"][1, :, 1])) |>
@@ -357,7 +375,9 @@ function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise,
             val_mask, sum(size(data[field], 1) for field in meta["target_features"]), 1) |>
                    device
 
-        node_type, senders, receivers, edge_features = create_base_graph(
+        node_type, senders,
+        receivers,
+        edge_features = create_base_graph(
             data, meta["features"]["node_type"]["data_max"],
             meta["features"]["node_type"]["data_min"], device)
 
@@ -409,13 +429,16 @@ function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise,
                 desc = "Validation progress: ", barlen = 50)
 
             for i in 1:dataset.meta["n_trajectories_valid"]
-                data_valid, meta_valid = next_trajectory!(
+                data_valid,
+                meta_valid = next_trajectory!(
                     dataset, device; types_noisy = args.types_noisy, is_training = false)
 
                 mask = Int32.(findall(
                     x -> x in args.types_updated, data_valid["node_type"][1, :, 1])) |>
                        device
-                node_type_valid, senders_valid, receivers_valid, edge_features_valid = create_base_graph(
+                node_type_valid, senders_valid,
+                receivers_valid,
+                edge_features_valid = create_base_graph(
                     data_valid, meta_valid["features"]["node_type"]["data_max"],
                     meta_valid["features"]["node_type"]["data_min"], device)
                 val_mask_valid = Float32.(map(
@@ -430,7 +453,8 @@ function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise,
                     for field in meta_valid["target_features"]),
                     1) |> device
 
-                ve, g, p = validation_step(args.training_strategy,
+                ve, g,
+                p = validation_step(args.training_strategy,
                     (
                         mgn, data_valid, meta_valid, delta, args.solver_valid,
                         args.solver_valid_dt, fields, node_type_valid,
@@ -452,8 +476,9 @@ function train_mgn!(mgn::GraphNetwork, opt_state, dataset::Dataset, noise,
 
             if !isnothing(args.wandb_logger)
                 Wandb.log(args.wandb_logger,
-                    Dict("validation_loss" => valid_error /
-                                              dataset.meta["n_trajectories_valid"]))
+                    Dict("validation_loss" =>
+                        valid_error /
+                        dataset.meta["n_trajectories_valid"]))
             end
 
             if valid_error / dataset.meta["n_trajectories_valid"] < min_validation_loss
@@ -534,7 +559,9 @@ function eval_network(ds_path, cp_path::String, out_path::String, solver = nothi
         outputs += dataset.meta["features"][tf]["dim"]
     end
 
-    mgn, _, _, _ = load(
+    mgn, _,
+    _,
+    _ = load(
         quantities, typeof(dims) <: AbstractArray ? length(dims) : dims, e_norms,
         n_norms, o_norms, outputs, args.mps, args.layer_size, args.hidden_layers,
         nothing, device, args.use_valid ? joinpath(cp_path, "valid") : cp_path)
@@ -593,7 +620,9 @@ function eval_network!(solver, mgn::GraphNetwork, dataset::Dataset, device::Func
         inflow_mask = repeat(data["node_type"][:, :, 1] .== 1,
             sum(size(data[field], 1) for field in meta["target_features"]), 1) |> device
 
-        node_type, senders, receivers, edge_features = create_base_graph(
+        node_type, senders,
+        receivers,
+        edge_features = create_base_graph(
             data, meta["features"]["node_type"]["data_max"],
             meta["features"]["node_type"]["data_min"], device)
 
@@ -606,7 +635,8 @@ function eval_network!(solver, mgn::GraphNetwork, dataset::Dataset, device::Func
             target_dict[tf] = meta["features"][tf]["dim"]
         end
 
-        sol_u, sol_t = rollout(
+        sol_u,
+        sol_t = rollout(
             solver, mgn, initial_state, fields, meta, dataset.meta["target_features"],
             target_dict, node_type, edge_features, senders, receivers,
             val_mask, inflow_mask, data, start, stop, dt, saves)
@@ -629,8 +659,9 @@ function eval_network!(solver, mgn::GraphNetwork, dataset::Dataset, device::Func
         end
 
         traj_ops[(ti, "mesh_pos")] = cpu_device()(data["mesh_pos"])
-        traj_ops[(ti, "gt")] = cpu_device()(vcat([data[field]
-                                                  for field in meta["target_features"]]...))
+        traj_ops[(ti,
+            "gt")] = cpu_device()(vcat([data[field]
+                                        for field in meta["target_features"]]...))
         traj_ops[(ti, "prediction")] = cpu_device()(prediction)
         errors[(ti, "error")] = cpu_device()(error[:, 1, :])
     end
