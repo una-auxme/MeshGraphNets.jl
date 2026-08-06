@@ -596,6 +596,7 @@ function eval_network!(solver, mgn::GraphNetwork, dataset::Dataset, device::Func
         out_path, start, stop, dt, saves, mse_steps, args::Args)
     local traj_ops = Dict{Tuple{Int, String}, Array{Float32, 3}}()
     local errors = Dict{Tuple{Int, String}, Array{Float32, 2}}()
+    local rmse_errors = Dict{Tuple{Int, String}, Array{Float32, 3}}()
     local timesteps = Dict{Tuple{Int, String}, Array{Float32, 1}}()
     local cells = Dict{Tuple{Int, String}, Array{Int32, 3}}()
 
@@ -647,6 +648,8 @@ function eval_network!(solver, mgn::GraphNetwork, dataset::Dataset, device::Func
              vcat([data[field][:, :, 1:length(saves)] for field in meta["target_features"]]...)) .^
             2;
             dims = 2)
+        rmse_error = sqrt.((prediction - vcat([data[field][:, :, 1:length(saves)] for field in meta["target_features"]]...)) .^ 2)
+
         timesteps[(ti, "timesteps")] = sol_t
 
         @info "Rollout trajectory $ti completed!"
@@ -664,6 +667,7 @@ function eval_network!(solver, mgn::GraphNetwork, dataset::Dataset, device::Func
                                         for field in meta["target_features"]]...))
         traj_ops[(ti, "prediction")] = cpu_device()(prediction)
         errors[(ti, "error")] = cpu_device()(error[:, 1, :])
+        rmse_errors[(ti, "rmse_error")] = cpu_device()(rmse_error)
     end
 
     eval_path = joinpath(out_path,
@@ -680,6 +684,12 @@ function eval_network!(solver, mgn::GraphNetwork, dataset::Dataset, device::Func
             sub_g["size"] = collect(size(value))
         end
         for (key, value) in errors
+            g = open_group(f, string(key[1]))
+            sub_g = create_group(g, key[2])
+            sub_g["data"] = reshape(value, length(value))
+            sub_g["size"] = collect(size(value))
+        end
+        for (key, value) in rmse_errors
             g = open_group(f, string(key[1]))
             sub_g = create_group(g, key[2])
             sub_g["data"] = reshape(value, length(value))
