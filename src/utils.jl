@@ -1,4 +1,5 @@
 # Copyright (c) 2023 Julian Trommer
+# Copyright (c) 2025 Luca Kahlenberg
 # SPDX-License-Identifier: MIT
 # See LICENSE for details.
 

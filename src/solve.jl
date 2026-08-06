@@ -14,6 +14,7 @@
 #
 # Modified from the original MeshGraphNets software for this Julia project.
 # Copyright (c) 2023 Julian Trommer
+# Copyright (c) 2025 Luca Kahlenberg
 # SPDX-License-Identifier: Apache-2.0
 # See LICENSE-APACHE and NOTICE for details.
 

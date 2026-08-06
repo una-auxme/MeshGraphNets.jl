@@ -1,6 +1,7 @@
 MeshGraphNets.jl
 Copyright (c) 2023 Julian Trommer
 Copyright (c) 2024 Leonard Heber
+Copyright (c) 2024 Luca Kahlenberg
 
 This product includes software adapted from the MeshGraphNets implementation
 in Google DeepMind's deepmind-research repository:
@@ -24,6 +25,7 @@ The following files are adaptations of, or are derived from, the
 - src/dataset.jl
 - src/graph.jl
 - src/solve.jl
+- examples/cylinder_flow/convert_data.jl
 - examples/cylinder_flow/cylinder_flow.jl
 - examples/cylinder_flow/meta.json
 
