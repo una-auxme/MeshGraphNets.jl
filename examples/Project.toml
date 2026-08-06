@@ -1,0 +1,7 @@
+[deps]
+MeshGraphNets = "f7b4726d-4195-44ab-b39c-37bbdadae004"
+Optimisers = "3bd65402-5787-11e9-1adc-39752487f4e2"
+OrdinaryDiffEq = "1dea7af3-3e70-54e6-95c3-0bf5283fa5ed"
+Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
+TFRecord = "841416d8-1a6a-485a-b0fc-1328d0f53d5e"
+Wandb = "ad70616a-06c9-5745-b1f1-6a5f42545108"

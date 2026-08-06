@@ -5,95 +5,113 @@
 import Printf: @sprintf
 import Statistics: stdm
 
-"""
-    der_minmax(path)
-
-Calculates the minimum and maximum derivative for each target feature in the given dataset.
-
-## Arguments
-- `path`: Path to the dataset files.
-
-## Returns
-- Minimum and maximum derivative in training, validation and test set.
-"""
-function der_minmax(path)
-    result = der_minmax(path, true)
-    result_test = der_minmax(path, false)
-
-    for (k, v) in result_test
-        if v[1] < result[k][1]
-            result[k][1] = v[1]
-        end
-        if v[2] > result[k][2]
-            result[k][2] = v[2]
-        end
-    end
-    return result
+function isnumber(meta, f)
+    return getfield(Base, Symbol(uppercasefirst(meta["features"][f]["dtype"]))) ==
+           Int32 ||
+           getfield(Base, Symbol(uppercasefirst(meta["features"][f]["dtype"]))) ==
+           Float32
 end
 
 """
-    der_minmax(path, is_training)
+    data_minmax(path)
 
-Calculates the minimum and maximum derivative for each target feature in the given part of the dataset.
+Calculates the minimum and maximum for each feature in the given part of the dataset.
 
 ## Arguments
 - `path`: Path to the dataset files.
-- `is_training`: Determines for which dataset the calculation should be done. True for train and validation set, false for test set.
 
 ## Returns
-- Minimum and maximum derivative in the specified part of the dataset.
+- Minimum and maximum in training, validation and test set
 """
-function der_minmax(path, is_training)
-    dataset = load_dataset(path, is_training)
+function data_minmax(path)
+    args = Args()
+    ds_train = Dataset(:train, path, args)
+    ds_train.meta["types_updated"] = args.types_updated
+    ds_train.meta["types_noisy"] = args.types_noisy
+    ds_train.meta["noise_stddevs"] = args.noise_stddevs
+    ds_train.meta["device"] = cpu_device()
+    ds_train.meta["training_strategy"] = nothing
+    train_loader = DataLoader(
+        ds_train; batchsize = -1, buffer = false, parallel = true, shuffle = true)
 
-    target_features = dataset.meta["target_features"]
+    ds_valid = Dataset(:valid, path, args)
+    ds_valid.meta["types_updated"] = args.types_updated
+    ds_valid.meta["types_noisy"] = args.types_noisy
+    ds_valid.meta["noise_stddevs"] = args.noise_stddevs
+    ds_valid.meta["device"] = cpu_device()
+    ds_valid.meta["training_strategy"] = nothing
+    valid_loader = DataLoader(ds_valid; batchsize = -1, buffer = false, parallel = true)
 
-    result = Dict(tf => [Inf32, -Inf32] for tf in target_features)
+    ds_test = Dataset(:test, path, args)
+    ds_test.meta["device"] = cpu_device()
+    ds_test.meta["training_strategy"] = nothing
+    test_loader = DataLoader(ds_test; batchsize = -1, buffer = false, parallel = true)
 
-    n_traj = dataset.meta["n_trajectories"]
+    features = ds_train.meta["feature_names"]
+    target_features = ds_train.meta["target_features"]
 
-    for _ in 1:n_traj
-        data,
-        meta = next_trajectory!(
-            dataset, cpu_device(); types_noisy = [], noise_stddevs = [], ts = nothing)
-        dt = Float32(meta["dt"][2] - meta["dt"][1])
+    result = Dict{String, Vector{Float32}}()
+    for f in features
+        if !haskey(ds_train.meta["features"][f], "onehot") && isnumber(ds_train.meta, f)
+            result[f] = [Inf32, -Inf32]
+        end
+    end
+    for tf in target_features
+        if !haskey(ds_train.meta["features"][tf], "onehot") && isnumber(ds_train.meta, tf)
+            result["target|$tf"] = [Inf32, -Inf32]
+        end
+    end
+
+    function add_to_result(data)
+        for f in features
+            if !haskey(ds_train.meta["features"][f], "onehot") && isnumber(ds_train.meta, f)
+                data_min = minimum(data[f])
+                data_max = maximum(data[f])
+                if data_min < result[f][1]
+                    result[f][1] = data_min
+                end
+                if data_max > result[f][2]
+                    result[f][2] = data_max
+                end
+            end
+        end
+
         for tf in target_features
-            for i in 2:size(data[tf], 3)
-                ddiff = (data[tf][:, :, i] - data[tf][:, :, i - 1]) ./ dt
+            if !haskey(ds_train.meta["features"][tf], "onehot") &&
+               isnumber(ds_train.meta, tf)
+                ddiff = data[tf][:, :, 2:end] - data[tf][:, :, 1:(end - 1)]
+                dts = Float32.(data["dt"][2:end-1] - data["dt"][1:(end - 2)])
+                for i in eachindex(dts)
+                    ddiff[:, :, i] ./= dts[i]
+                end
                 ddiff_min = minimum(ddiff)
                 ddiff_max = maximum(ddiff)
-                if ddiff_min < result[tf][1]
-                    result[tf][1] = ddiff_min
+                if ddiff_min < result["target|$tf"][1]
+                    result["target|$tf"][1] = ddiff_min
                 end
-                if ddiff_max > result[tf][2]
-                    result[tf][2] = ddiff_max
+                if ddiff_max > result["target|$tf"][2]
+                    result["target|$tf"][2] = ddiff_max
                 end
             end
         end
+    end
+    p = Progress(length(train_loader) + length(valid_loader) + length(test_loader);
+        desc = "Calculating minmax-norm: ", dt = 1.0, barlen = 50)
+    for data in train_loader
+        add_to_result(data)
+        next!(p)
     end
 
-    if is_training
-        n_traj_valid = dataset.meta["n_trajectories_valid"]
-        for _ in 1:n_traj_valid
-            data,
-            meta = next_trajectory!(dataset, cpu_device(); types_noisy = [],
-                noise_stddevs = [], ts = nothing, is_training = false)
-            dt = Float32(meta["dt"][2] - meta["dt"][1])
-            for tf in target_features
-                for i in 2:size(data[tf], 3)
-                    ddiff = (data[tf][:, :, i] - data[tf][:, :, i - 1]) ./ dt
-                    ddiff_min = minimum(ddiff)
-                    ddiff_max = maximum(ddiff)
-                    if ddiff_min < result[tf][1]
-                        result[tf][1] = ddiff_min
-                    end
-                    if ddiff_max > result[tf][2]
-                        result[tf][2] = ddiff_max
-                    end
-                end
-            end
-        end
+    for data in valid_loader
+        add_to_result(data)
+        next!(p)
     end
+
+    for data in test_loader
+        add_to_result(data)
+        next!(p)
+    end
+    finish!(p)
 
     return result
 end
@@ -101,121 +119,97 @@ end
 """
     data_meanstd(path)
 
-Calculates the mean and standard deviation for each feature in the given dataset.
+Calculates the mean and standard deviation for each feature in the given part of the dataset.
 
 ## Arguments
 - `path`: Path to the dataset files.
 
 ## Returns
-- Mean and standard deviation in training, validation and test set.
+- Mean and standard deviation in training, validation and test set
 """
 function data_meanstd(path)
-    result = data_meanstd(path, true)
-    result_test = data_meanstd(path, false)
+    args = Args()
+    ds_train = Dataset(:train, path, args)
+    ds_train.meta["types_updated"] = args.types_updated
+    ds_train.meta["types_noisy"] = args.types_noisy
+    ds_train.meta["noise_stddevs"] = args.noise_stddevs
+    ds_train.meta["device"] = cpu_device()
+    ds_train.meta["training_strategy"] = nothing
+    train_loader = DataLoader(
+        ds_train; batchsize = -1, buffer = false, parallel = true, shuffle = true)
+
+    ds_valid = Dataset(:valid, path, args)
+    ds_valid.meta["types_updated"] = args.types_updated
+    ds_valid.meta["types_noisy"] = args.types_noisy
+    ds_valid.meta["noise_stddevs"] = args.noise_stddevs
+    ds_valid.meta["device"] = cpu_device()
+    ds_valid.meta["training_strategy"] = nothing
+    valid_loader = DataLoader(ds_valid; batchsize = -1, buffer = false, parallel = true)
+
+    ds_test = Dataset(:test, path, args)
+    ds_test.meta["device"] = cpu_device()
+    ds_test.meta["training_strategy"] = nothing
+    test_loader = DataLoader(ds_test; batchsize = -1, buffer = false, parallel = true)
+
+    features = ds_train.meta["feature_names"]
+    target_features = ds_train.meta["target_features"]
+
+    result = Dict{String, Array{Float32, 2}}()
+    for f in features
+        if !haskey(ds_train.meta["features"][f], "onehot") && isnumber(ds_train.meta, f)
+            result[f] = zeros(Float32, ds_train.meta["features"][f]["dim"], 0)
+        end
+    end
+    for tf in target_features
+        if isnumber(ds_train.meta, tf)
+            result["target|$tf"] = zeros(Float32, ds_train.meta["features"][tf]["dim"], 0)
+        end
+    end
+
+    function add_to_result(data)
+        for f in features
+            if !haskey(ds_train.meta["features"][f], "onehot") && isnumber(ds_train.meta, f)
+                result[f] = cat(
+                    result[f], [data[f][:, :, i] for i in axes(data[f], 3)]...; dims = 2)
+            end
+        end
+
+        for tf in target_features
+            if isnumber(ds_train.meta, tf)
+                tf_data = data[tf][:, :, 2:end] - data[tf][:, :, 1:(end - 1)]
+                result["target|$tf"] = cat(result["target|$tf"],
+                    [tf_data[:, :, i] ./ Float32(data["dt"][i + 1] - data["dt"][i])
+                     for i in axes(tf_data, 3)]...;
+                    dims = 2)
+            end
+        end
+    end
+
+    p = Progress(length(train_loader) + length(valid_loader) + length(test_loader);
+        desc = "Calculating meanstd-norm: ", dt = 1.0, barlen = 50)
+    for data in train_loader
+        add_to_result(data)
+        next!(p)
+    end
+    for data in valid_loader
+        add_to_result(data)
+        next!(p)
+    end
+    for data in test_loader
+        add_to_result(data)
+        next!(p)
+    end
+    finish!(p)
 
     meanstd_dict = Dict{String, Any}()
 
     for k in keys(result)
-        result[k] = cat(result[k], result_test[k]; dims = 3)
         m = mean(result[k])
         s = stdm(result[k], m)
         meanstd_dict[k] = (m, s)
     end
 
     return meanstd_dict
-end
-
-"""
-    data_meanstd(path, is_training)
-
-Calculates the mean and standard deviation for each feature in the given part of the dataset.
-
-## Arguments
-- `path`: Path to the dataset files.
-- `is_training`: Determines for which dataset the calculation should be done. True for train and validation set, false for test set.
-
-## Returns
-- Mean and standard deviation in the specified part of the dataset.
-"""
-function data_meanstd(path, is_training)
-    dataset = load_dataset(path, is_training)
-
-    features = dataset.meta["feature_names"]
-    target_features = dataset.meta["target_features"]
-
-    result = Dict(f => [0.0f0, 0.0f0] for f in features)
-    for tf in target_features
-        result["target|$tf"] = [0.0f0, 0.0f0]
-    end
-
-    n_traj = dataset.meta["n_trajectories"]
-
-    function isnumber(meta, f)
-        return getfield(Base, Symbol(uppercasefirst(meta["features"][f]["dtype"]))) ==
-               Int32 ||
-               getfield(Base, Symbol(uppercasefirst(meta["features"][f]["dtype"]))) ==
-               Float32
-    end
-
-    result_arrays = Dict()
-    for f in features
-        if isnumber(dataset.meta, f)
-            result_arrays[f] = zeros(
-                Float32, dataset.meta["features"][f]["dim"], prod(dataset.meta["dims"]), 0)
-        end
-    end
-    for tf in target_features
-        if isnumber(dataset.meta, tf)
-            result_arrays["target|$tf"] = zeros(
-                Float32, dataset.meta["features"][tf]["dim"], prod(dataset.meta["dims"]), 0)
-        end
-    end
-
-    for _ in 1:n_traj
-        data,
-        meta = next_trajectory!(
-            dataset, cpu_device(); types_noisy = [], noise_stddevs = [], ts = nothing)
-
-        for f in features
-            if isnumber(meta, f)
-                result_arrays[f] = cat(result_arrays[f], data[f]; dims = 3)
-            end
-        end
-
-        dt = Float32(meta["dt"][2] - meta["dt"][1])
-        for tf in target_features
-            if isnumber(meta, tf)
-                result_arrays["target|$tf"] = cat(result_arrays["target|$tf"],
-                    (data[tf][:, :, 2:end] - data[tf][:, :, 1:(end - 1)]) ./ dt; dims = 3)
-            end
-        end
-    end
-
-    if is_training
-        n_traj_valid = dataset.meta["n_trajectories_valid"]
-        for _ in 1:n_traj_valid
-            data,
-            meta = next_trajectory!(dataset, cpu_device(); types_noisy = [],
-                noise_stddevs = [], ts = nothing, is_training = false)
-
-            for f in features
-                if isnumber(meta, f)
-                    result_arrays[f] = cat(result_arrays[f], data[f]; dims = 3)
-                end
-            end
-
-            dt = Float32(meta["dt"][2] - meta["dt"][1])
-            for tf in target_features
-                if isnumber(meta, tf)
-                    result_arrays["target|$tf"] = cat(result_arrays["target|$tf"],
-                        (data[tf][:, :, 2:end] - data[tf][:, :, 1:(end - 1)]) ./ dt;
-                        dims = 3)
-                end
-            end
-        end
-    end
-
-    return result_arrays
 end
 
 """
@@ -296,8 +290,7 @@ Deletes the content of the given number of lines in the terminal.
 """
 function clear_log(lines::Integer, move_up = true)
     if lines <= 0
-        throw(ArgumentError("""Expected positive number of lines to clear,
-                            got: lines == $lines"""))
+        throw(ArgumentError("Expected positive number of lines to clear, got: lines == $lines"))
     end
     clear_line(move_up)
     for _ in 1:lines

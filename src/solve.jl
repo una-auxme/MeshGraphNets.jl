@@ -53,17 +53,17 @@ Solves the ODEProblem of the MGN with the given solver.
 - Solution of the ODEProblem at the specified timesteps.
 - Timesteps corresponding to the solution.
 """
-function rollout(solver, mgn::GraphNetwork, initial_state, fields, meta, target_fields,
+function rollout(solver, mgn::GraphNetwork, data, fields, meta, target_fields,
         target_dict, node_type, edge_features, senders, receivers, val_mask,
-        inflow_mask, data, start, stop, dt, saves; show_progress = true)
-    pr = show_progress ? ProgressUnknown(; showspeed = true) : nothing
-
+        inflow_mask, start, stop, dt, saves, pr = nothing)
     interval = (start, stop)
-    x0 = vcat([initial_state[field] for field in target_fields]...)
-    inputs = deepcopy(initial_state)
-    for i in keys(target_dict)
-        delete!(inputs, i)
-    end
+    x0 = vcat([typeof(data[field]) <: AbstractArray ? data[field][:, :, 1] :
+               data[field] for field in target_fields]...)
+    inputs = Dict{String, AbstractArray}(
+        [typeof(data[field]) <: AbstractArray ? (field, data[field][:, :, 1]) :
+         (field, data[field]) for field in fields]
+    )
+
     prob = ODEProblem(ode_func_eval, x0, interval,
         (mgn, mgn.ps, data, inputs, fields, meta, target_fields,
             target_dict, node_type, edge_features, senders, receivers,
@@ -74,7 +74,7 @@ function rollout(solver, mgn::GraphNetwork, initial_state, fields, meta, target_
         sol = solve(prob, solver; adaptive = false, dt = dt, saveat = saves)
     end
 
-    if show_progress
+    if !isnothing(pr)
         finish!(pr)
     end
 
@@ -211,6 +211,7 @@ function ode_step(x,
 
     graph = build_graph(
         mgn, inputs, fields, 1, node_type, edge_features, senders, receivers)
+
     output, st = mgn.model(graph, ps, mgn.st)
     mgn.st = st
 

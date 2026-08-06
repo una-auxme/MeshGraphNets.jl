@@ -36,7 +36,7 @@ Constructs the parts of the node features and edge features that do not change d
 - Vector of indices where each edge in the graph ends.
 - Array of edge features for each edge in the graph.
 """
-function create_base_graph(data, type_size, type_min, device::Function)
+function create_base_graph!(data, type_size, type_min, device::Function)
     node_type = one_hot(
         vec(data["node_type"][:, :, 1]), type_size - type_min + 1, 1 - type_min)
 
@@ -65,7 +65,11 @@ function create_base_graph(data, type_size, type_min, device::Function)
     edge_features = vcat(
         relative_mesh_pos, permutedims(map(norm, eachcol(relative_mesh_pos))))
 
-    return device(node_type), device(senders), device(receivers), device(edge_features)
+    data["node_type"] = device(node_type)
+    data["senders"] = device(senders)
+    data["receivers"] = device(receivers)
+    data["edge_features"] = device(edge_features)
+    # return device(node_type), device(senders), device(receivers), device(edge_features)
 end
 
 """
