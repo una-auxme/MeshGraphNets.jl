@@ -1,7 +1,21 @@
+# Copyright 2020 DeepMind Technologies Limited. All Rights Reserved.
 #
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Modified from the original MeshGraphNets software for this Julia project.
 # Copyright (c) 2023 Julian Trommer
-# Licensed under the MIT license. See LICENSE file in the project root for details.
-#
+# SPDX-License-Identifier: Apache-2.0
+# See LICENSE-APACHE and NOTICE for details.
 
 import ProgressMeter: ProgressUnknown
 
@@ -205,7 +219,8 @@ function ode_step(x,
 
     buf = Zygote.Buffer(output)
     for i in eachindex(target_fields)
-        buf[(sum(indices[1:(i - 1)]) + 1):sum(indices[1:i]), :] = inverse_data(
+        buf[
+            (sum(indices[1:(i - 1)]) + 1):sum(indices[1:i]), :] = inverse_data(
             mgn.o_norm[target_fields[i]],
             output[(sum(indices[1:(i - 1)]) + 1):sum(indices[1:i]), :])
     end

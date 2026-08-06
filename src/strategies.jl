@@ -1,7 +1,6 @@
-#
 # Copyright (c) 2023 Julian Trommer
-# Licensed under the MIT license. See LICENSE file in the project root for details.
-#
+# SPDX-License-Identifier: MIT
+# See LICENSE for details.
 
 import SciMLBase: AbstractSensitivityAlgorithm, ODEFunction
 import SciMLSensitivity: InterpolatingAdjoint, ZygoteVJP
@@ -109,7 +108,8 @@ Inner function for validation of a single trajectory.
 - Prediction data with `data_interval` as timesteps.
 """
 function _validation_step(t::Tuple, sim_interval, data_interval)
-    mgn, data, meta, _, solver, solver_dt, fields, node_type, edge_features, senders, receivers, mask, val_mask, inflow_mask, pr = t
+    mgn, data, meta, _, solver, solver_dt, fields, node_type, edge_features,
+    senders, receivers, mask, val_mask, inflow_mask, pr = t
 
     target_dict = Dict{String, Int32}()
     for tf in meta["target_features"]
@@ -118,7 +118,8 @@ function _validation_step(t::Tuple, sim_interval, data_interval)
 
     gt = vcat([data[tf] for tf in meta["target_features"]]...)[:, :, data_interval]
 
-    sol_u, _ = rollout(
+    sol_u,
+    _ = rollout(
         solver, mgn, data, fields, meta, meta["target_features"], target_dict,
         node_type, edge_features, senders, receivers, val_mask, inflow_mask,
         sim_interval[1], sim_interval[end], solver_dt, sim_interval, pr)
@@ -140,7 +141,8 @@ function get_delta(::SolverStrategy, ::Integer)
 end
 
 function init_train_step(::SolverStrategy, t::Tuple, ta::Tuple)
-    mgn, data, meta, fields, target_fields, node_type, edge_features, senders, receivers, _, idx_mask, val_mask = t
+    mgn, data, meta, fields, target_fields, node_type,
+    edge_features, senders, receivers, _, idx_mask, val_mask = t
 
     target_dict = Dict{String, Int32}()
     for tf in meta["target_features"]
@@ -160,7 +162,8 @@ function init_train_step(::SolverStrategy, t::Tuple, ta::Tuple)
 end
 
 function train_step(strategy::SolverStrategy, t::Tuple)
-    mgn, data, inputs, fields, meta, target_fields, target_dict, node_type, edge_features, senders, receivers, idx_mask, val_mask, u0, gt = t
+    mgn, data, inputs, fields, meta, target_fields, target_dict, node_type,
+    edge_features, senders, receivers, idx_mask, val_mask, u0, gt = t
 
     # inflow_mask = repeat(data["node_type"][:, :, 1] .== 1,
     #     sum(size(data[field], 1) for field in meta["target_features"]), 1) |> cpu_device()
@@ -168,14 +171,17 @@ function train_step(strategy::SolverStrategy, t::Tuple)
     pr = ProgressUnknown(; desc = "Solver progress: ", showspeed = true)
     print("\n\n\n\n\n\n\n") # display solver progress after main progress
 
-    ff = ODEFunction{false}((x, p, t) -> ode_func_train(x,
+    ff = ODEFunction{false}((x,
+        p,
+        t) -> ode_func_train(x,
         (mgn, p, data, inputs, fields, meta,
             target_fields, target_dict, node_type,
             edge_features, senders, receivers, val_mask, data["inflow_mask"], strategy, pr),
         t))
     prob = ODEProblem(ff, u0, (strategy.tstart, strategy.tstop), mgn.ps)
 
-    shoot_loss, shoot_gs = Zygote.withgradient(
+    shoot_loss,
+    shoot_gs = Zygote.withgradient(
         ps -> train_loss(strategy,
             (prob, ps, u0, nothing, gt, idx_mask,
                 val_mask, mgn.n_norm, target_fields,
@@ -199,7 +205,8 @@ Inner function for a solver based training step that calculates the loss based o
 - Calculated loss.
 """
 function train_loss(strategy::SolverStrategy, t::Tuple)
-    prob, ps, u0, callback_solve, gt, idx_mask, val_mask, n_norm, target_fields, target_dims = t
+    prob, ps, u0, callback_solve, gt, idx_mask, val_mask, n_norm, target_fields,
+    target_dims = t
 
     sol = solve(remake(prob; p = ps), strategy.solver; u0 = u0,
         saveat = (first(prob.tspan)):(strategy.dt):(last(prob.tspan)),
@@ -281,7 +288,8 @@ function get_delta(strategy::SolverBatchTraining, ::Integer)
 end
 
 function init_train_step(strategy::SolverBatchTraining, t::Tuple, ta::Tuple)
-    mgn, data, meta, fields, target_fields, node_type, edge_features, senders, receivers, datapoint_interval, idx_mask, val_mask = t
+    mgn, data, meta, fields, target_fields, node_type, edge_features,
+    senders, receivers, datapoint_interval, idx_mask, val_mask = t
 
     tsteps = (strategy.tstart):(strategy.dt):(strategy.tstop)
     tspan = (tsteps[first(datapoint_interval)], tsteps[last(datapoint_interval)])
@@ -305,19 +313,23 @@ function init_train_step(strategy::SolverBatchTraining, t::Tuple, ta::Tuple)
 end
 
 function train_step(strategy::SolverBatchTraining, t::Tuple)
-    mgn, data, inputs, fields, meta, target_fields, target_dict, node_type, edge_features, senders, receivers, idx_mask, val_mask, u0, gt, tspan = t
+    mgn, data, inputs, fields, meta, target_fields, target_dict, node_type,
+    edge_features, senders, receivers, idx_mask, val_mask, u0, gt, tspan = t
 
     pr = ProgressUnknown(; desc = "Solver progress: ", showspeed = true)
     print("\n\n\n\n\n\n\n") # display solver progress after main progress
 
-    ff = ODEFunction{false}((x, p, t) -> ode_func_train(x,
+    ff = ODEFunction{false}((x,
+        p,
+        t) -> ode_func_train(x,
         (mgn, p, data, inputs, fields, meta,
             target_fields, target_dict, node_type,
             edge_features, senders, receivers, val_mask, data["inflow_mask"], strategy, pr),
         t))
     prob = ODEProblem(ff, u0, tspan, mgn.ps)
 
-    shoot_loss, shoot_gs = Zygote.withgradient(
+    shoot_loss,
+    shoot_gs = Zygote.withgradient(
         ps -> train_loss(strategy,
             (prob, ps, u0, nothing, gt, idx_mask,
                 val_mask, mgn.n_norm, target_fields,
@@ -431,7 +443,8 @@ function get_delta(strategy::DerivativeStrategy, trajectory_length::Integer)
 end
 
 function init_train_step(::DerivativeStrategy, t::Tuple, ::Tuple)
-    mgn, data, meta, fields, target_fields, node_type, edge_features, senders, receivers, datapoint, mask, _ = t
+    mgn, data, meta, fields, target_fields, node_type,
+    edge_features, senders, receivers, datapoint, mask, _ = t
 
     target_quantities_change = vcat([mgn.o_norm[field]((data["target|" * field][
                                          :, :, datapoint] -

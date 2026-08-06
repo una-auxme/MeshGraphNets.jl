@@ -1,7 +1,6 @@
-#
 # Copyright (c) 2023 Julian Trommer
-# Licensed under the MIT license. See LICENSE file in the project root for details.
-#
+# SPDX-License-Identifier: MIT
+# See LICENSE for details.
 
 import Pkg
 Pkg.develop(; path = joinpath(@__DIR__, "../../MeshGraphNets.jl"))
@@ -30,7 +29,8 @@ makedocs(; sitename = "MeshGraphNets.jl",
             "Training Strategies" => "strategies.md",
             "Utilities" => "util.md",
             "GraphNetCore.jl" => "graph_net_core.md"
-        ]
+        ],
+        "License" => "license.md"
     ]
 )
 

@@ -1,7 +1,6 @@
-#
 # Copyright (c) 2023 Julian Trommer
-# Licensed under the MIT license. See LICENSE file in the project root for details.
-#
+# SPDX-License-Identifier: MIT
+# See LICENSE for details.
 
 import Printf: @sprintf
 import Statistics: stdm
@@ -81,7 +80,7 @@ function data_minmax(path)
             if !haskey(ds_train.meta["features"][tf], "onehot") &&
                isnumber(ds_train.meta, tf)
                 ddiff = data[tf][:, :, 2:end] - data[tf][:, :, 1:(end - 1)]
-                dts = Float32.(data["dt"][2:end-1] - data["dt"][1:(end - 2)])
+                dts = Float32.(data["dt"][2:(end - 1)] - data["dt"][1:(end - 2)])
                 for i in eachindex(dts)
                     ddiff[:, :, i] ./= dts[i]
                 end

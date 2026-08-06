@@ -1,7 +1,22 @@
+# Copyright 2020 DeepMind Technologies Limited. All Rights Reserved.
 #
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Modified from the original MeshGraphNets software for this Julia project.
 # Copyright (c) 2023 Julian Trommer
-# Licensed under the MIT license. See LICENSE file in the project root for details.
-#
+# Copyright (c) 2024 Leonard Heber
+# SPDX-License-Identifier: Apache-2.0
+# See LICENSE-APACHE and NOTICE for details.
 
 module MeshGraphNets
 
@@ -291,7 +306,9 @@ function train_network(opt, ds_path, cp_path; kws...)
         outputs += ds_train.meta["features"][tf]["dim"]
     end
 
-    mgn, train_state, df_train, df_valid = load(
+    mgn, train_state,
+    df_train,
+    df_valid = load(
         quantities, typeof(dims) <: AbstractArray ? length(dims) : dims,
         e_norms, n_norms, o_norms, outputs, args.mps,
         args.layer_size, args.hidden_layers, opt, device, cp_path)
@@ -418,7 +435,10 @@ function train_mgn!(mgn::GraphNetwork, train_state, ds_train::Dataset, ds_valid:
                         showspeed = true)
                     ve = validation_step(args.training_strategy,
                         (
-                            mgn, data_valid, ds_valid.meta, length(get_delta(args.training_strategy, data_valid["trajectory_length"])), args.solver_valid,
+                            mgn, data_valid,
+                            ds_valid.meta,
+                            length(get_delta(args.training_strategy, data_valid["trajectory_length"])),
+                            args.solver_valid,
                             args.solver_valid_dt, fields, data_valid["node_type"],
                             data_valid["edge_features"], data_valid["senders"],
                             data_valid["receivers"], data_valid["mask"],
@@ -438,8 +458,9 @@ function train_mgn!(mgn::GraphNetwork, train_state, ds_train::Dataset, ds_valid:
 
                 if !isnothing(args.wandb_logger)
                     Wandb.log(args.wandb_logger,
-                        Dict("validation_loss" => valid_error /
-                                                  ds_valid.meta["n_trajectories"]))
+                        Dict("validation_loss" =>
+                            valid_error /
+                            ds_valid.meta["n_trajectories"]))
                 end
 
                 if valid_error / ds_valid.meta["n_trajectories"] < min_validation_loss
@@ -523,7 +544,9 @@ function eval_network(ds_path, cp_path::String, out_path::String, solver = nothi
         outputs += ds_test.meta["features"][tf]["dim"]
     end
 
-    mgn, _, _, _ = load(
+    mgn, _,
+    _,
+    _ = load(
         quantities, typeof(dims) <: AbstractArray ? length(dims) : dims, e_norms,
         n_norms, o_norms, outputs, args.mps, args.layer_size, args.hidden_layers,
         nothing, device, args.use_valid ? joinpath(cp_path, "valid") : cp_path)
@@ -578,7 +601,8 @@ function eval_network!(solver, mgn::GraphNetwork, ds_test::Dataset, out_path, st
         pr = ProgressUnknown(;
             desc = "Trajectory $ti/$(length(test_loader)): ", showspeed = true)
 
-        sol_u, sol_t = rollout(
+        sol_u,
+        sol_t = rollout(
             solver, mgn, data, fields, ds_test.meta, ds_test.meta["target_features"],
             target_dict, data["node_type"], data["edge_features"], data["senders"],
             data["receivers"], data["val_mask"], data["inflow_mask"], start, stop, dt,
@@ -596,11 +620,13 @@ function eval_network!(solver, mgn::GraphNetwork, ds_test::Dataset, out_path, st
         end
 
         traj_ops[(ti, "mesh_pos")] = cpu_device()(data["mesh_pos"])
-        traj_ops[(ti, "gt")] = cpu_device()(vcat([data[field][:, :, 1:size(prediction, 3)]
-                                                  for field in ds_test.meta["target_features"]]...))
+        traj_ops[(ti,
+            "gt")] = cpu_device()(vcat([data[field][:, :, 1:size(prediction, 3)]
+                                        for field in ds_test.meta["target_features"]]...))
         traj_ops[(ti, "prediction")] = cpu_device()(prediction)
         errors[(ti, "error")] = error
-        edges[(ti, "edges")] = cpu_device()(permutedims(hcat(
+        edges[(ti,
+            "edges")] = cpu_device()(permutedims(hcat(
             data["senders"], data["receivers"])))
     end
 
