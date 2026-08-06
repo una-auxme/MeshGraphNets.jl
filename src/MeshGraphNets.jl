@@ -306,7 +306,9 @@ function train_network(opt, ds_path, cp_path; kws...)
         outputs += ds_train.meta["features"][tf]["dim"]
     end
 
-    mgn, train_state, df_train, df_valid = load(
+    mgn, train_state,
+    df_train,
+    df_valid = load(
         quantities, typeof(dims) <: AbstractArray ? length(dims) : dims,
         e_norms, n_norms, o_norms, outputs, args.mps,
         args.layer_size, args.hidden_layers, opt, device, cp_path)
@@ -433,7 +435,10 @@ function train_mgn!(mgn::GraphNetwork, train_state, ds_train::Dataset, ds_valid:
                         showspeed = true)
                     ve = validation_step(args.training_strategy,
                         (
-                            mgn, data_valid, ds_valid.meta, length(get_delta(args.training_strategy, data_valid["trajectory_length"])), args.solver_valid,
+                            mgn, data_valid,
+                            ds_valid.meta,
+                            length(get_delta(args.training_strategy, data_valid["trajectory_length"])),
+                            args.solver_valid,
                             args.solver_valid_dt, fields, data_valid["node_type"],
                             data_valid["edge_features"], data_valid["senders"],
                             data_valid["receivers"], data_valid["mask"],
@@ -453,8 +458,9 @@ function train_mgn!(mgn::GraphNetwork, train_state, ds_train::Dataset, ds_valid:
 
                 if !isnothing(args.wandb_logger)
                     Wandb.log(args.wandb_logger,
-                        Dict("validation_loss" => valid_error /
-                                                  ds_valid.meta["n_trajectories"]))
+                        Dict("validation_loss" =>
+                            valid_error /
+                            ds_valid.meta["n_trajectories"]))
                 end
 
                 if valid_error / ds_valid.meta["n_trajectories"] < min_validation_loss
@@ -595,7 +601,8 @@ function eval_network!(solver, mgn::GraphNetwork, ds_test::Dataset, out_path, st
         pr = ProgressUnknown(;
             desc = "Trajectory $ti/$(length(test_loader)): ", showspeed = true)
 
-        sol_u, sol_t = rollout(
+        sol_u,
+        sol_t = rollout(
             solver, mgn, data, fields, ds_test.meta, ds_test.meta["target_features"],
             target_dict, data["node_type"], data["edge_features"], data["senders"],
             data["receivers"], data["val_mask"], data["inflow_mask"], start, stop, dt,
@@ -613,11 +620,13 @@ function eval_network!(solver, mgn::GraphNetwork, ds_test::Dataset, out_path, st
         end
 
         traj_ops[(ti, "mesh_pos")] = cpu_device()(data["mesh_pos"])
-        traj_ops[(ti, "gt")] = cpu_device()(vcat([data[field][:, :, 1:size(prediction, 3)]
-                                                  for field in ds_test.meta["target_features"]]...))
+        traj_ops[(ti,
+            "gt")] = cpu_device()(vcat([data[field][:, :, 1:size(prediction, 3)]
+                                        for field in ds_test.meta["target_features"]]...))
         traj_ops[(ti, "prediction")] = cpu_device()(prediction)
         errors[(ti, "error")] = error
-        edges[(ti, "edges")] = cpu_device()(permutedims(hcat(
+        edges[(ti,
+            "edges")] = cpu_device()(permutedims(hcat(
             data["senders"], data["receivers"])))
     end
 
