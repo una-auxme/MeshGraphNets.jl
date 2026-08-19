@@ -3,7 +3,6 @@
 # SPDX-License-Identifier: MIT
 # See LICENSE for details.
 
-import Printf: @sprintf
 import Statistics: stdm
 
 function isnumber(meta, f)

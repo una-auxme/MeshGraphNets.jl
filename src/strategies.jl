@@ -4,7 +4,9 @@
 # See LICENSE for details.
 
 import SciMLBase: AbstractSensitivityAlgorithm, ODEFunction
-import SciMLSensitivity: InterpolatingAdjoint, ZygoteVJP
+import SciMLSensitivity: GaussAdjoint, ZygoteVJP
+
+import SciMLBase: isadaptive, successful_retcode
 
 #######################################################
 # Abstract type and functions for training strategies #
@@ -166,10 +168,7 @@ function train_step(strategy::SolverStrategy, t::Tuple)
     mgn, data, inputs, fields, meta, target_fields, target_dict, node_type,
     edge_features, senders, receivers, idx_mask, val_mask, u0, gt = t
 
-    # inflow_mask = repeat(data["node_type"][:, :, 1] .== 1,
-    #     sum(size(data[field], 1) for field in meta["target_features"]), 1) |> cpu_device()
-
-    pr = ProgressUnknown(; desc = "Solver progress: ", showspeed = true)
+    pr = ProgressUnknown(; desc = "Solver progress: ", dt = 1.0, showspeed = true)
     print("\n\n\n\n\n\n\n") # display solver progress after main progress
 
     ff = ODEFunction{false}((x,
@@ -179,7 +178,7 @@ function train_step(strategy::SolverStrategy, t::Tuple)
             target_fields, target_dict, node_type,
             edge_features, senders, receivers, val_mask, data["inflow_mask"], strategy, pr),
         t))
-    prob = ODEProblem(ff, u0, (strategy.tstart, strategy.tstop), mgn.ps)
+    prob = ODEProblem(ff, u0, (strategy.tstart, strategy.tstop), mgn.train_state.parameters)
 
     shoot_loss,
     shoot_gs = Zygote.withgradient(
@@ -187,7 +186,7 @@ function train_step(strategy::SolverStrategy, t::Tuple)
             (prob, ps, u0, nothing, gt, idx_mask,
                 val_mask, mgn.n_norm, target_fields,
                 [meta["features"][tf]["dim"] for tf in target_fields])),
-        mgn.ps)
+        mgn.train_state.parameters)
 
     clear_log(7, false)
     return shoot_gs, shoot_loss
@@ -226,7 +225,7 @@ function validation_step(strategy::SolverStrategy, t::Tuple)
 end
 
 """
-    SolverTraining(tstart, dt, tstop, solver; sense = InterpolatingAdjoint(autojacvec = ZygoteVJP()), solargs...)
+    SolverTraining(tstart, dt, tstop, solver; sense = GaussAdjoint(autojacvec = ZygoteVJP()), solargs...)
 
 The default solver based training that is normally used for NeuralODEs.
 Simulates the system from `tstart` to `tstop` and calculates the loss based on the difference between the prediction and the ground truth at the timesteps `tstart:dt:tstop`.
@@ -238,7 +237,7 @@ Simulates the system from `tstart` to `tstop` and calculates the loss based on t
 - `solver`: Solver that is used for simulating the system.
 
 ## Keyword Arguments
-- `sense = InterpolatingAdjoint(autojacvec = ZygoteVJP())`: The sensitivity algorithm that is used for caluclating the sensitivities.
+- `sense = GaussAdjoint(autojacvec = ZygoteVJP())`: The sensitivity algorithm that is used for caluclating the sensitivities.
 - `solargs`: Keyword arguments that are passed on to the solver.
 """
 struct SolverTraining <: SolverStrategy
@@ -254,8 +253,8 @@ function SolverTraining(tstart::Float32,
         dt::Float32,
         tstop::Float32,
         solver::OrdinaryDiffEqAlgorithm;
-        sense::AbstractSensitivityAlgorithm = InterpolatingAdjoint(;
-            autojacvec = ZygoteVJP(), checkpointing = true),
+        sense::AbstractSensitivityAlgorithm = GaussAdjoint(;
+            autojacvec = ZygoteVJP(), checkpointing = isadaptive(solver) ? true : false),
         solargs...)
     SolverTraining(tstart, dt, tstop, solver, sense, solargs)
 end
@@ -264,9 +263,9 @@ struct SolverBatchTraining <: SolverStrategy
     tstart::Float32
     dt::Float32
     tstop::Float32
+    interval_size::Integer
     solver::OrdinaryDiffEqAlgorithm
     sense::AbstractSensitivityAlgorithm
-    interval_size::Integer
     solargs::Any
 end
 
@@ -275,10 +274,10 @@ function SolverBatchTraining(tstart::Float32,
         tstop::Float32,
         interval_size::Integer,
         solver::OrdinaryDiffEqAlgorithm;
-        sense::AbstractSensitivityAlgorithm = InterpolatingAdjoint(;
-            autojacvec = ZygoteVJP(), checkpointing = false),
+        sense::AbstractSensitivityAlgorithm = GaussAdjoint(;
+            autojacvec = ZygoteVJP(), checkpointing = isadaptive(solver) ? true : false),
         solargs...)
-    SolverBatchTraining(tstart, dt, tstop, solver, sense, interval_size, solargs)
+    SolverBatchTraining(tstart, dt, tstop, interval_size, solver, sense, solargs)
 end
 
 function get_delta(strategy::SolverBatchTraining, ::Integer)
@@ -317,7 +316,7 @@ function train_step(strategy::SolverBatchTraining, t::Tuple)
     mgn, data, inputs, fields, meta, target_fields, target_dict, node_type,
     edge_features, senders, receivers, idx_mask, val_mask, u0, gt, tspan = t
 
-    pr = ProgressUnknown(; desc = "Solver progress: ", showspeed = true)
+    pr = ProgressUnknown(; desc = "Solver progress: ", dt = 1.0, showspeed = true)
     print("\n\n\n\n\n\n\n") # display solver progress after main progress
 
     ff = ODEFunction{false}((x,
@@ -327,7 +326,7 @@ function train_step(strategy::SolverBatchTraining, t::Tuple)
             target_fields, target_dict, node_type,
             edge_features, senders, receivers, val_mask, data["inflow_mask"], strategy, pr),
         t))
-    prob = ODEProblem(ff, u0, tspan, mgn.ps)
+    prob = ODEProblem(ff, u0, tspan, mgn.train_state.parameters)
 
     shoot_loss,
     shoot_gs = Zygote.withgradient(
@@ -335,14 +334,14 @@ function train_step(strategy::SolverBatchTraining, t::Tuple)
             (prob, ps, u0, nothing, gt, idx_mask,
                 val_mask, mgn.n_norm, target_fields,
                 [meta["features"][tf]["dim"] for tf in target_fields])),
-        mgn.ps)
+        mgn.train_state.parameters)
 
     clear_log(7, false)
     return shoot_gs, shoot_loss
 end
 
 """
-    MultipleShooting(tstart, dt, tstop, solver, interval_size, continuity_term = 100; sense = InterpolatingAdjoint(autojacvec = ZygoteVJP(), checkpointing = true), solargs...)
+    MultipleShooting(tstart, dt, tstop, solver, interval_size, continuity_term = 100; sense = GaussAdjoint(autojacvec = ZygoteVJP(), checkpointing = true), solargs...)
 
 Similar to SolverTraining, but splits the trajectory into intervals that are solved independently and then combines them for loss calculation.
 Useful if the network tends to get stuck in a local minimum if SolverTraining is used.
@@ -354,7 +353,7 @@ Useful if the network tends to get stuck in a local minimum if SolverTraining is
 - `solver`: Solver that is used for simulating the system.
 
 ## Keyword Arguments
-- `sense = InterpolatingAdjoint(autojacvec = ZygoteVJP(), checkpointing = true)`: The sensitivity algorithm that is used for caluclating the sensitivities.
+- `sense = GaussAdjoint(autojacvec = ZygoteVJP(), checkpointing = true)`: The sensitivity algorithm that is used for caluclating the sensitivities.
 - `interval_size`: Size of the intervals (i.e. number of datapoints in one interval).
 - `continuity_term = 100`: Factor by which the error between points of concurrent intervals is multiplied.
 - `solargs`: Keyword arguments that are passed on to the solver.
@@ -363,9 +362,9 @@ struct MultipleShooting <: SolverStrategy
     tstart::Float32
     dt::Float32
     tstop::Float32
+    interval_size::Integer                  # Number of observations in one interval
     solver::OrdinaryDiffEqAlgorithm
     sense::AbstractSensitivityAlgorithm
-    interval_size::Integer                  # Number of observations in one interval
     continuity_term::Integer
     solargs::Any
 end
@@ -373,18 +372,18 @@ end
 function MultipleShooting(tstart::Float32,
         dt::Float32,
         tstop::Float32,
+        interval_size::Integer,
         solver::OrdinaryDiffEqAlgorithm;
-        sense::AbstractSensitivityAlgorithm = InterpolatingAdjoint(;
-            autojacvec = ZygoteVJP(), checkpointing = true),
-        interval_size,
+        sense::AbstractSensitivityAlgorithm = GaussAdjoint(;
+            autojacvec = ZygoteVJP(), checkpointing = isadaptive(solver) ? true : false),
         continuity_term = 100,
         solargs...)
     MultipleShooting(
-        tstart, dt, tstop, solver, sense, interval_size, continuity_term, solargs)
+        tstart, dt, tstop, interval_size, solver, sense, continuity_term, solargs)
 end
 
 function train_loss(strategy::MultipleShooting, t::Tuple)
-    prob, ps, _, callback_solve, gt, val_mask, _, _, _ = t
+    prob, ps, _, callback_solve, gt, _, val_mask, _, _, _ = t
 
     tsteps = (strategy.tstart):(strategy.dt):(strategy.tstop)
     ranges = [i:min(length(tsteps), i + strategy.interval_size - 1)
@@ -405,21 +404,18 @@ function train_loss(strategy::MultipleShooting, t::Tuple)
             ) for rg in ranges]
     group_predictions = typeof(gt) <: CuArray ? CuArray.(sols) : Array.(sols)
 
-    retcodes = [sol.retcode for sol in sols]
-    if any(retcodes .!= :Success)
-        return Inf
+    if !all(successful_retcode.(sols))
+        throw(ErrorException("solve call did not succeed."))
     end
-
-    vm = cpu_device()(val_mask)
 
     loss = 0
     for (i, rg) in enumerate(ranges)
-        error = (gt[:, :, rg] - group_predictions[i]) .^ 2 |> cpu_device()
+        error = (gt[:, :, rg] - group_predictions[i]) .^ 2
 
         err_buf = Zygote.Buffer(error)
         err_buf[:, :, :] = error
         for i in axes(err_buf, 3)
-            err_buf[:, :, i] = err_buf[:, :, i] .* vm
+            err_buf[:, :, i] = err_buf[:, :, i] .* val_mask
         end
         loss += mean(copy(err_buf))
 
@@ -445,7 +441,7 @@ end
 
 function init_train_step(::DerivativeStrategy, t::Tuple, ::Tuple)
     mgn, data, meta, fields, target_fields, node_type,
-    edge_features, senders, receivers, datapoint, mask, _ = t
+    edge_features, senders, receivers, datapoint, mask, val_mask = t
 
     target_quantities_change = vcat([mgn.o_norm[field]((data["target|" * field][
                                          :, :, datapoint] -
@@ -457,13 +453,13 @@ function init_train_step(::DerivativeStrategy, t::Tuple, ::Tuple)
     graph = build_graph(
         mgn, data, fields, datapoint, node_type, edge_features, senders, receivers)
 
-    return (mgn, graph, target_quantities_change, mask)
+    return (mgn, graph, target_quantities_change, mask, val_mask)
 end
 
 function train_step(::DerivativeStrategy, t::Tuple)
-    mgn, graph, target_quantities_change, mask = t
+    mgn, graph, target_quantities_change, mask, val_mask = t
 
-    return GraphNetCore.step!(mgn, graph, target_quantities_change, mask, mse_reduce)
+    return GraphNetCore.step!(mgn, graph, target_quantities_change, mask, val_mask)
 end
 
 function validation_step(::DerivativeStrategy, t::Tuple)

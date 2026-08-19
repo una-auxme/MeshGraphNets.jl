@@ -19,21 +19,27 @@
 
 using MeshGraphNets
 
-import OrdinaryDiffEq: Euler, Tsit5
+import OrdinaryDiffEqLowOrderRK: Euler
+import OrdinaryDiffEqTsit5: Tsit5
 import Optimisers: Adam
 
 ######################
 # Network parameters #
 ######################
 
-message_steps = 15
+mps = 15
 layer_size = 128
 hidden_layers = 2
-batch = 1
-epo = 1
-ns = 10e6
+
+#######################
+# Training parameters #
+#######################
+
+batchsize = 1
+epochs = 1
+steps = 10_000_000
 norm_steps = 1000
-cuda = true
+use_cuda = true
 cp_derivative = 10000
 cp_solver = 10
 ad = :Zygote
@@ -47,23 +53,12 @@ types_updated = [0, 5]
 types_noisy = [0]
 noise_stddevs = [0.02f0]
 
-########################
-# Optimiser parameters #
-########################
-
-learning_rate_derivative = 1.0f-4
-opt_derivative = Adam(learning_rate_derivative)
-# opt_derivative = nothing
-
-learning_rate_solver = 1.0f-2
-opt_solver = Adam(learning_rate_solver)
-# opt_solver = nothing
-
 #########################
 # Paths to data folders #
 #########################
 
-ds_path = "../data/CylinderFlow/data"
+# ds_path = "../data/CylinderFlow/data"
+ds_path = "../../../llm_playground/MeshGraphNets.jl/data/CylinderFlow/data/"
 chk_path = "../data/CylinderFlow/chk"
 eval_path = "../data/CylinderFlow/eval"
 
@@ -82,33 +77,41 @@ mse_steps = vcat(collect(tstart:1.0f0:tstop), tstop)
 # Solvers #
 ###########
 
-solver_train = Tsit5()
+solver_train = Euler()
 solver_eval_fixed_timesteps = Euler()
 solver_eval_adaptive_timesteps = Tsit5()
+
+solver_valid = Euler()
+solver_valid_dt = 0.01f0
 
 #################
 # Train network #
 #################
 
-# with DerivativeTraining
+# with DerivativeStrategy
 
-# train_network(
-#     opt_derivative, ds_path, chk_path; mps = message_steps, layer_size = layer_size,
-#     hidden_layers = hidden_layers, batchsize = batch, epochs = epo, steps = Int(ns),
-#     use_cuda = cuda, checkpoint = cp_derivative, norm_steps = 1000, types_inflow = types_inflow,
-#     types_updated = types_updated, types_noisy = types_noisy, noise_stddevs = noise_stddevs,
-#     training_strategy = DerivativeTraining(), ad = ad
-# )
+training_strategy = DerivativeTraining()
+opt = Adam(1.0f-4)
 
-# with SolverTraining
+# or with SolverStrategy
 
-train_network(
-    opt_solver, ds_path, chk_path; mps = message_steps, layer_size = layer_size,
-    hidden_layers = hidden_layers, batchsize = batch, epochs = epo, steps = Int(ns),
-    use_cuda = cuda, checkpoint = cp_solver, norm_steps = 1000, types_inflow = types_inflow,
-    types_updated = types_updated, types_noisy = types_noisy, noise_stddevs = noise_stddevs,
-    training_strategy = SolverTraining(tstart, dt, tstop, solver_train), ad = ad
+interval_size = 10
+
+solver_strategies = (
+    SolverTraining(tstart, dt, tstop, solver_train; dt),
+    SolverBatchTraining(tstart, dt, tstop, interval_size, solver_train; dt),
+    MultipleShooting(tstart, dt, tstop, interval_size, solver_train; dt)
 )
+
+training_strategy = solver_strategies[1]
+opt = Adam(1.0f-3)
+
+# Start training
+
+train_network(opt, ds_path, chk_path; mps, layer_size, hidden_layers,
+    batchsize, epochs, steps, use_cuda, checkpoint = cp_derivative,
+    norm_steps, types_inflow, types_updated, types_noisy, noise_stddevs,
+    training_strategy = training_strategy, ad, solver_valid, solver_valid_dt)
 
 ####################
 # Evaluate network #

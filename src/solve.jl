@@ -66,7 +66,7 @@ function rollout(solver, mgn::GraphNetwork, data, fields, meta, target_fields,
     )
 
     prob = ODEProblem(ode_func_eval, x0, interval,
-        (mgn, mgn.ps, data, inputs, fields, meta, target_fields,
+        (mgn, mgn.train_state.parameters, data, inputs, fields, meta, target_fields,
             target_dict, node_type, edge_features, senders, receivers,
             val_mask, inflow_mask, saves[2] - saves[1], pr))
     if isnothing(dt)
@@ -213,8 +213,7 @@ function ode_step(x,
     graph = build_graph(
         mgn, inputs, fields, 1, node_type, edge_features, senders, receivers)
 
-    output, st = mgn.model(graph, ps, mgn.st)
-    mgn.st = st
+    output, _ = mgn.train_state.model(graph, ps, mgn.train_state.states)
 
     indices = [meta["features"][tf]["dim"] for tf in target_fields]
 
