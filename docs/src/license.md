@@ -13,6 +13,7 @@ MeshGraphNets implementation:
 - `src/dataset.jl`
 - `src/graph.jl`
 - `src/solve.jl`
+- `examples/cylinder_flow/convert_data.jl`
 - `examples/cylinder_flow/cylinder_flow.jl`
 - `examples/cylinder_flow/meta.json`
 

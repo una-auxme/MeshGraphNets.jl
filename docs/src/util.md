@@ -1,6 +1,6 @@
-# Utility Functions 
+# Utility Functions
 
 ```@docs
-der_minmax
+data_minmax
 data_meanstd
 ```

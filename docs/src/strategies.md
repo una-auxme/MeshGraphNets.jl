@@ -3,5 +3,6 @@
 ```@docs
 DerivativeTraining
 SolverTraining
+SolverBatchTraining
 MultipleShooting
 ```

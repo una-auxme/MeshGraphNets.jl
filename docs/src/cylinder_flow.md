@@ -21,7 +21,9 @@ You can keep the `.tfrecord` files as is. You only need to change the `meta.json
 
 The default path for the data folder that is specified in the [example script](https://github.com/una-auxme/MeshGraphNets.jl/blob/main/examples/cylinder_flow/cylinder_flow.jl) is:
 
-    {path_to_cylinder_flow.jl}/data/datasets/
+```sh
+{path_to_cylinder_flow.jl}/data/datasets/
+```
 
 ## Training the Network
 
@@ -35,17 +37,15 @@ In order to train the system you can simply comment in/out the lines of code pro
 # with DerivativeTraining
 
 train_network(
-    noise, opt, ds_path, chk_path; mps = message_steps, layer_size = layer_size, hidden_layers = hidden_layers, batchsize = batch,
+    opt, ds_path, chk_path; mps = message_steps, layer_size = layer_size, hidden_layers = hidden_layers, batchsize = batch,
     epochs = epo, steps = Int(ns), use_cuda = cuda, checkpoint = cp, norm_steps = 1000, types_updated = types_updated,
-    types_noisy = types_noisy, training_strategy = DerivativeTraining(), solver_valid = Euler(), solver_valid_dt = 0.01f0
+    types_noisy = types_noisy, noise_stddevs = noise, training_strategy = DerivativeTraining(), solver_valid = Euler(), solver_valid_dt = 0.01f0
 )
 
 # with SolverTraining
 
 train_network(
-    noise, opt, ds_path, chk_path; mps = message_steps, layer_size = layer_size, hidden_layers = hidden_layers, batchsize = batch, epochs = epo,
-    steps = Int(ns), use_cuda = cuda, checkpoint = 10, norm_steps = 1000, types_updated = types_updated, types_noisy = types_noisy,
-    training_strategy = SolverTraining(0.0f0, 0.01f0, 5.99f0, Euler(); adaptive = false, tstops = 0.0f0:0.01f0:5.99f0)
+    opt, ds_path, chk_path; mps = message_steps, layer_size = layer_size, hidden_layers = hidden_layers, batchsize = batch, epochs = epo, steps = Int(ns), use_cuda = cuda, checkpoint = 10, norm_steps = 1000, types_updated = types_updated, types_noisy = types_noisy, noise_stddevs = noise, training_strategy = SolverTraining(0.0f0, 0.01f0, 5.99f0, Euler(); adaptive = false, tstops = 0.0f0:0.01f0:5.99f0)
 )
 ```
 
@@ -71,7 +71,6 @@ eval_network(
     ds_path, chk_path, eval_path, Tsit5(); start = 0.0f0, stop = 5.99f0, saves = 0.0f0:0.01f0:5.99f0,
     mse_steps = collect(0.0f0:1.0f0:5.99f0), mps = message_steps, layer_size = layer_size, hidden_layers = hidden_layers, use_cuda=cuda
 )
-
 ```
 
 ## Addition: Arguments for Training & Evaluation
