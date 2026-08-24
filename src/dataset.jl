@@ -19,12 +19,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # See LICENSE-APACHE and NOTICE for details.
 
+using HDF5
+using JLD2
+
 import Distributions: Normal
-import HDF5: Group
 import Random: MersenneTwister
 
-import HDF5: read_dataset
-import JLD2: jldopen
 import JSON: parse
 import Random: seed!, shuffle
 
@@ -59,7 +59,7 @@ Creates a [Dataset](@ref) with the given files.
 function Dataset(datafile::String, metafile::String, args)
     if !isfile(datafile)
         throw(ArgumentError("Invalid datafile: $datafile"))
-    elseif !endswith(datafile, ".jld2") || !endswith(datafile, ".h5")
+    elseif !endswith(datafile, ".jld2") && !endswith(datafile, ".h5")
         throw(ArgumentError("Invalid file format for datafile: $datafile. Possible formats are [.jld2, .h5]"))
     end
     if !isfile(metafile)
@@ -118,14 +118,26 @@ end
 
 function keystraj(datafile::String)
     if endswith(datafile, ".jld2")
-        file = jldopen(datafile, "r")
+        return jldopen(datafile, "r") do file
+            collect(keys(file))
+        end
     elseif endswith(datafile, ".h5")
-        file = h5open(datafile, "r")
+        return h5open(datafile, "r") do file
+            collect(keys(file))
+        end
     end
-    keys_traj = keys(file)
-    close(file)
+    throw(ArgumentError("Invalid datafile format: $datafile"))
+end
 
-    return keys_traj
+function load_traj(ds::Dataset, key::String)
+    return lock(ds.lock) do
+        if endswith(ds.datafile, ".jld2")
+            return JLD2.load(ds.datafile, key)
+        end
+        return h5open(ds.datafile, "r") do file
+            Base.read(open_group(file, key))
+        end
+    end
 end
 
 MLUtils.numobs(ds::Dataset) = ds.meta["n_trajectories"]
@@ -133,16 +145,18 @@ MLUtils.numobs(ds::Dataset) = ds.meta["n_trajectories"]
 function MLUtils.getobs!(buffer, ds::Dataset, idx)
     key = ds.meta["keys_trajectories"][idx]
 
-    set_meta!(buffer, ds, key)
+    traj = load_traj(ds, key)
+
+    set_meta!(buffer, ds, traj)
 
     for fn in ds.meta["feature_names"]
         alloc_traj!(buffer, ds, fn)
 
-        match_data = match_keys(ds, key, fn)
+        match_data = match_keys(ds, traj, fn)
 
         set_traj_data!(buffer, match_data, ds, fn)
     end
-    set_edges!(buffer, ds, key)
+    set_edges!(buffer, ds, traj)
 
     prepare_trajectory!(buffer, ds.meta, ds.meta["device"])
 
@@ -174,7 +188,7 @@ function MLUtils.getobs(ds::Dataset, idx)
     return traj_dict
 end
 
-function set_meta!(traj_dict::Dict{String, Any}, ds::Dataset, key::String)
+function set_meta!(traj_dict::Dict{String, Any}, ds::Dataset, traj::Dict{String, Any})
     dt = ds.meta["dt"]
     tl = ds.meta["trajectory_length"]
     dims = ds.meta["dims"]
@@ -185,94 +199,40 @@ function set_meta!(traj_dict::Dict{String, Any}, ds::Dataset, key::String)
         elseif typeof(tl) <: Integer
             dt = range(0.0, dt * (tl - 1); step = dt)
         elseif (typeof(tl)) == String
-            lock(ds.lock) do
-                if endswith(ds.datafile, ".jld2")
-                    file = jldopen(ds.datafile, "r")
-                    traj = file[key]
-                    tl = file[key][tl]
-                else
-                    file = h5open(ds.datafile, "r")
-                    traj = open_group(file, key)
-                    tl = Base.read(traj, tl)
-                end
-                close(file)
-            end
+            tl = traj[tl]
             dt = range(0.0, dt * (tl - 1); step = dt)
         else
             throw(ArgumentError("The metadata \"trajectory_length\" is invalid. Possible values are: [-1 (for inferring the length), Integer (for specifying the length), String (as key inside the datafile)]"))
         end
     elseif typeof(dt) == String
-        lock(ds.lock) do
-            if endswith(ds.datafile, ".jld2")
-                file = jldopen(ds.datafile, "r")
-                traj = file[key]
-                dt = file[key][dt]
-            else
-                file = h5open(ds.datafile, "r")
-                traj = open_group(file, key)
-                dt = Base.read(traj, dt)
-            end
-            close(file)
-        end
+        dt = traj[dt]
         if (typeof(tl)) == String
-            lock(ds.lock) do
-                if endswith(ds.datafile, ".jld2")
-                    file = jldopen(ds.datafile, "r")
-                    traj = file[key]
-                    tl = file[key][tl]
-                else
-                    file = h5open(ds.datafile, "r")
-                    traj = open_group(file, key)
-                    tl = Base.read(traj, tl)
-                end
-                close(file)
-            end
+            tl = traj[tl]
         elseif tl == -1
-            if length(dt) == 1
-                tl = length(range(0.0, dt * (tl - 1); step = dt))
+            if dt isa Number || length(dt) == 1
+                throw(ArgumentError("The metadata \"dt\" contains a static time delta and \"trajectory_length\" is -1. The trajectory length cannot be inferred."))
             else
-                tl = length(dt) - 1
+                tl = length(dt)
             end
         elseif !(typeof(tl) <: Integer)
             throw(ArgumentError("The metadata \"trajectory_length\" is invalid. Possible values are: [-1 (for inferring the length), Integer (for specifying the length), String (as key inside the datafile)]"))
         end
-        if length(dt) == 1
-            dt = range(0.0, dt * (tl - 1); step = dt)
+        if dt isa Number || length(dt) == 1
+            static_dt = dt isa Number ? dt : only(dt)
+            dt = range(0.0, static_dt * (tl - 1); step = static_dt)
         end
     else
         throw(ArgumentError("The metadata \"dt\" is invalid. Possible values are: [Float (for specifying the static time delta), String (as key inside the datafile)]"))
     end
 
     if typeof(dims) == String
-        lock(ds.lock) do
-            if endswith(ds.datafile, ".jld2")
-                file = jldopen(ds.datafile, "r")
-                traj = file[key]
-                dims = file[key][dims]
-            else
-                file = h5open(ds.datafile, "r")
-                traj = open_group(file, key)
-                dims = Base.read(traj, dims)
-            end
-            close(file)
-        end
+        dims = traj[dims]
     end
     if typeof(dims) <: Integer
         if haskey(ds.meta, "n_nodes")
             n_nodes = ds.meta["n_nodes"]
             if typeof(n_nodes) == String
-                lock(ds.lock) do
-                    if endswith(ds.datafile, ".jld2")
-                        file = jldopen(ds.datafile, "r")
-                        traj = file[key]
-                        n_nodes = file[key][n_nodes]
-                    else
-                        file = h5open(ds.datafile, "r")
-                        traj = open_group(file, key)
-                        n_nodes = Base.read(traj, n_nodes)
-                    end
-                    close(file)
-                end
+                n_nodes = traj[n_nodes]
             elseif !(typeof(n_nodes) <: Integer)
                 throw(ArgumentError("The metadata \"n_nodes\" is invalid. Possible values are: [Integer (for specifying the number of nodes), String (as key inside the datafile)]"))
             end
@@ -284,18 +244,7 @@ function set_meta!(traj_dict::Dict{String, Any}, ds::Dataset, key::String)
             if haskey(ds.meta, "n_nodes")
                 n_nodes = ds.meta["n_nodes"]
                 if typeof(n_nodes) == String
-                    lock(ds.lock) do
-                        if endswith(ds.datafile, ".jld2")
-                            file = jldopen(ds.datafile, "r")
-                            traj = file[key]
-                            n_nodes = file[key][n_nodes]
-                        else
-                            file = h5open(ds.datafile, "r")
-                            traj = open_group(file, key)
-                            n_nodes = Base.read(traj, n_nodes)
-                        end
-                        close(file)
-                    end
+                    n_nodes = traj[n_nodes]
                 elseif !(typeof(n_nodes) <: Integer)
                     throw(ArgumentError("The metadata \"n_nodes\" is invalid. Possible values are: [Integer (for specifying the number of nodes), String (as key inside the datafile)]"))
                 end
@@ -303,18 +252,7 @@ function set_meta!(traj_dict::Dict{String, Any}, ds::Dataset, key::String)
                 throw(ArgumentError("The metadata \"dims\" contains -1 (for inferring dimensions) but no metadata \"n_nodes\" was provided. The number of nodes can only be inferred from a vector of dimensions with positive values. Either provide the number of nodes or use a vector of static positive dimensions."))
             end
             if haskey(ds.meta, "dims_key")
-                lock(ds.lock) do
-                    if endswith(ds.datafile, ".jld2")
-                        file = jldopen(ds.datafile, "r")
-                        traj = file[key]
-                        dims_file = file[key]["dims_key"]
-                    else
-                        file = h5open(ds.datafile, "r")
-                        traj = open_group(file, key)
-                        dims_file = Base.read(traj, "dims_key")
-                    end
-                    close(file)
-                end
+                dims_file = traj[ds.meta["dims_key"]]
                 if length(dims_file) != length(dims)
                     throw(ArgumentError("The size of the metadata \"dims\" vector is not equal the size of the dims inside the datafile: size(dims_meta) = $dims, size(dims_file) = $dims_file"))
                 else
@@ -350,15 +288,9 @@ function alloc_traj!(traj_dict::Dict{String, Any}, ds::Dataset, fn::String)
             getfield(Base, Symbol(uppercasefirst(ds.meta["features"][fn]["dtype"]))),
             dim, traj_dict["n_nodes"], tl)
     end
-    if haskey(ds.meta["features"][fn], "has_ev") && ds.meta["features"][fn]["has_ev"]
-        if !haskey(traj_dict, fn * ".ev")
-            traj_dict[fn * ".ev"] = zeros(
-                eltype(traj_dict[fn]), 2, traj_dict["n_nodes"], tl)
-        end
-    end
 end
 
-function match_keys(ds::Dataset, key::String, fn::String)
+function match_keys(ds::Dataset, traj::Dict{String, Any}, fn::String)
     if haskey(ds.meta["features"][fn], "split") && ds.meta["features"][fn]["split"]
         rx = Regex(replace(
             replace(replace(ds.meta["features"][fn]["key"], "[" => "\\["),
@@ -373,35 +305,11 @@ function match_keys(ds::Dataset, key::String, fn::String)
 
     match_data = Dict()
 
-    lock(ds.lock) do
-        if endswith(ds.datafile, ".jld2")
-            file = jldopen(ds.datafile, "r")
-            traj = file[key]
-            rx_match = eachmatch.(rx, keys(traj))
-            deleteat!(rx_match, findall(x -> length(collect(x)) == 0, rx_match))
-            matches = unique(getfield.(getindex.(collect.(rx_match), 1), :match))
-            for m in matches
-                match_data[m] = traj[m]
-                if haskey(ds.meta["features"][fn], "has_ev") &&
-                   ds.meta["features"][fn]["has_ev"]
-                    match_data[m * ".ev"] = traj[m * ".ev"]
-                end
-            end
-        else
-            file = h5open(ds.datafile, "r")
-            traj = open_group(file, key)
-            rx_match = eachmatch.(rx, keys(traj))
-            deleteat!(rx_match, findall(x -> length(collect(x)) == 0, rx_match))
-            matches = unique(getfield.(getindex.(collect.(rx_match), 1), :match))
-            for m in matches
-                match_data[m] = Base.read(traj, m)
-                if haskey(ds.meta["features"][fn], "has_ev") &&
-                   ds.meta["features"][fn]["has_ev"]
-                    match_data[m * ".ev"] = Base.read(traj, m * ".ev")
-                end
-            end
-        end
-        close(file)
+    rx_match = eachmatch.(rx, keys(traj))
+    deleteat!(rx_match, findall(x -> length(collect(x)) == 0, rx_match))
+    matches = unique(getfield.(getindex.(collect.(rx_match), 1), :match))
+    for m in matches
+        match_data[m] = traj[m]
     end
 
     return match_data
@@ -466,66 +374,46 @@ function set_traj_data!(traj_dict::Dict{String, Any}, match_data, ds::Dataset, f
     end
 end
 
-function set_edges!(traj_dict::Dict{String, Any}, ds::Dataset, key::String)
-    lock(ds.lock) do
-        if endswith(ds.datafile, ".jld2")
-            file = jldopen(ds.datafile, "r")
-            traj = file[key]
-        elseif endswith(ds.datafile, ".h5")
-            file = h5open(ds.datafile, "r")
-            traj = open_group(file, key)
-        end
-
-        if haskey(ds.meta, "edges")
-            if haskey(ds.meta["edges"], "type")
-                edge_type = ds.meta["edges"]["type"]
-                if edge_type == "cells"
-                    if !haskey(ds.meta["edges"], "key")
-                        throw(ArgumentError("The metadata \"type\" for metadata \"edges\" was defined as \"cells\", but no metadata \"key\" for the datafile was given."))
-                    end
-                    edge_key = ds.meta["edges"]["key"]
-                    if !haskey(traj, edge_key)
-                        throw(ArgumentError("The metadata \"key\" for metadata \"edges\", defined as \"$edge_key\", was not found in the datafile."))
-                    end
-                    if endswith(ds.datafile, ".jld2")
-                        traj_dict["cells"] = traj[edge_key]
-                    else
-                        traj_dict["cells"] = Base.read(traj, edge_key)
-                    end
-                elseif edge_type == "dims"
-                    traj_dict["edges"] = create_edges(
-                        traj_dict["dims"], traj_dict["node_type"],
-                        haskey(ds.meta, "no_edges_node_types") ?
-                        ds.meta["no_edges_node_types"] : [])
-                elseif edge_type == "custom"
-                    if !haskey(ds.meta["edges"], "key")
-                        throw(ArgumentError("The metadata \"type\" for metadata \"edges\" was defined as \"custom\", but no metadata \"key\" for the datafile was given."))
-                    end
-                    edge_key = ds.meta["edges"]["key"]
-                    if !haskey(traj, edge_key)
-                        throw(ArgumentError("The metadata \"key\" for metadata \"edges\", defined as \"$edge_key\", was not found in the datafile."))
-                    end
-                    if endswith(ds.datafile, ".jld2")
-                        edges = traj[edge_key]
-                    else
-                        edges = Base.read(traj, edge_key)
-                    end
-                    traj_dict["edges"] = edges
-                    # traj_dict["edges"] = parse_custom_edges(edges, traj_dict["node_type"],
-                    #     haskey(ds.meta, "no_edges_node_types") ?
-                    #     ds.meta["no_edges_node_types"] : [],
-                    #     haskey(ds.meta, "exclude_node_indices") ?
-                    #     ds.meta["exclude_node_indices"] : [])
-                else
-                    throw(ArgumentError("The metadata \"type\" of metadata \"edges\" is invalid. Possible values are: [\"cells\" for cell-type edge structures, \"dims\" for fixed edges along the dimensions, \"custom\" for custom edges]"))
+function set_edges!(traj_dict::Dict{String, Any}, ds::Dataset, traj::Dict{String, Any})
+    if haskey(ds.meta, "edges")
+        if haskey(ds.meta["edges"], "type")
+            edge_type = ds.meta["edges"]["type"]
+            if edge_type == "cells"
+                if !haskey(ds.meta["edges"], "key")
+                    throw(ArgumentError("The metadata \"type\" for metadata \"edges\" was defined as \"cells\", but no metadata \"key\" for the datafile was given."))
                 end
+                edge_key = ds.meta["edges"]["key"]
+                if !haskey(traj, edge_key)
+                    throw(ArgumentError("The metadata \"key\" for metadata \"edges\", defined as \"$edge_key\", was not found in the datafile."))
+                end
+                traj_dict["cells"] = traj[edge_key]
+
+            elseif edge_type == "dims"
+                traj_dict["edges"] = create_edges(
+                    traj_dict["dims"], traj_dict["node_type"],
+                    get(ds.meta, "no_edges_node_types", []))
+            elseif edge_type == "custom"
+                if !haskey(ds.meta["edges"], "key")
+                    throw(ArgumentError("The metadata \"type\" for metadata \"edges\" was defined as \"custom\", but no metadata \"key\" for the datafile was given."))
+                end
+                edge_key = ds.meta["edges"]["key"]
+                if !haskey(traj, edge_key)
+                    throw(ArgumentError("The metadata \"key\" for metadata \"edges\", defined as \"$edge_key\", was not found in the datafile."))
+                end
+                edges = traj[edge_key]
+
+                traj_dict["edges"] = parse_custom_edges(
+                    edges, traj_dict["node_type"],
+                    get(ds.meta, "no_edges_node_types", []),
+                    get(ds.meta, "exclude_node_indices", []))
             else
-                throw(ArgumentError("The metadata \"edges\" does not specify an edge type with the metadata \"type\"."))
+                throw(ArgumentError("The metadata \"type\" of metadata \"edges\" is invalid. Possible values are: [\"cells\" for cell-type edge structures, \"dims\" for fixed edges along the dimensions, \"custom\" for custom edges]"))
             end
         else
-            throw(ArgumentError("The metadata \"edges\" was not provided."))
+            throw(ArgumentError("The metadata \"edges\" does not specify an edge type with the metadata \"type\"."))
         end
-        close(file)
+    else
+        throw(ArgumentError("The metadata \"edges\" was not provided."))
     end
 end
 
@@ -596,7 +484,14 @@ function create_edges(dims, node_type, excluded_node_types)
 
     if length(dims) == 1
         for i in 1:(dims[1] - 1)
-            push!(edges, [i, i + 1])
+            if node_type[1, i, 1] in excluded_node_types
+                push!(edges, Int32[i, i])
+            elseif node_type[1, i + 1, 1] ∉ excluded_node_types
+                push!(edges, Int32[i, i + 1])
+            end
+        end
+        if dims[1] > 0 && node_type[1, dims[1], 1] in excluded_node_types
+            push!(edges, Int32[dims[1], dims[1]])
         end
     elseif length(dims) == 2
         throw(ArgumentError("2D-Meshes are not supported yet"))
@@ -628,9 +523,11 @@ function create_edges(dims, node_type, excluded_node_types)
                 end
             end
         end
+    else
+        throw(ArgumentError("Only 1D and 3D meshes are supported, got $(length(dims)) dimensions"))
     end
 
-    return hcat(sort(edges)...)
+    return hcat(sort(unique(edges))...)
 end
 
 """
@@ -648,15 +545,24 @@ Parses the edges that were read from the datafile. The format is a vector of pai
 - Two-dimensional array of edges as pairs of node indices.
 """
 function parse_custom_edges(edges, node_type, no_edges_node_types, exclude_node_indices)
-    exclude_indices = findall(x -> x ∈ no_edges_node_types, node_type)
-    exclude_indices = vcat(exclude_indices, exclude_node_indices)
-    filtered_edges = filter(x -> x[1] ∉ exclude_indices && x[2] ∉ exclude_indices, eachrow(edges))
+    node_types = ndims(node_type) == 1 ? node_type : vec(node_type[1, :, 1])
+    exclude_indices = Int32.(findall(x -> x ∈ no_edges_node_types, node_types))
+    exclude_indices = Set(vcat(exclude_indices, Int32.(exclude_node_indices)))
+    edge_pairs = if size(edges, 1) == 2
+        eachcol(edges)
+    elseif size(edges, 2) == 2
+        eachrow(edges)
+    else
+        throw(DimensionMismatch("custom edges must be a 2×N or N×2 array"))
+    end
+    filtered_edges = filter(
+        x -> Int32(x[1]) ∉ exclude_indices && Int32(x[2]) ∉ exclude_indices, edge_pairs)
     edge_vec = Vector{Vector{Int32}}()
     for edge in filtered_edges
-        push!(edge_vec, [edge[1], edge[2]])
+        push!(edge_vec, Int32[edge[1], edge[2]])
     end
 
-    return hcat(sort(edge_vec)...)
+    return hcat(sort(unique(edge_vec))...)
 end
 
 """

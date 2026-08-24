@@ -62,14 +62,12 @@ function create_base_graph!(data, type_size, type_min, device::Function)
 
     relative_mesh_pos = hcat(rel_vec...)
 
-    edge_features = vcat(
-        relative_mesh_pos, permutedims(map(norm, eachcol(relative_mesh_pos))))
+    edge_features = vcat(relative_mesh_pos, reshape(map(norm, eachcol(relative_mesh_pos)), 1, :))
 
     data["node_type"] = device(node_type)
     data["senders"] = device(senders)
     data["receivers"] = device(receivers)
     data["edge_features"] = device(edge_features)
-    # return device(node_type), device(senders), device(receivers), device(edge_features)
 end
 
 """

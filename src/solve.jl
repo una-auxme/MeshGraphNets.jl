@@ -119,8 +119,14 @@ function ode_func_train(x,
         t)
     bx = Zygote.Buffer(x)
     bx[:, :] = x
-    bx[inflow_mask] = vcat([data[field][:, :, floor(Int, t / strategy.dt) + 1]
-                            for field in target_fields]...)[inflow_mask]
+    max_data_idx = minimum(size(data[field], 3) for field in target_fields)
+    data_idx = if haskey(data, "dt")
+        clamp(searchsortedlast(data["dt"], t), 1, max_data_idx)
+    else
+        clamp(floor(Int, (t - strategy.tstart) / strategy.dt) + 1, 1, max_data_idx)
+    end
+    inflow_values = vcat([data[field][:, :, data_idx] for field in target_fields]...)
+    bx[:, inflow_mask] = inflow_values[:, inflow_mask]
 
     return ode_step(bx,
         (mgn, ps, inputs, fields, meta, target_fields, target_dict,
@@ -163,10 +169,17 @@ function ode_func_eval(x,
         (mgn, ps, data, inputs, fields, meta, target_fields, target_dict, node_type,
             edge_features, senders, receivers, val_mask, inflow_mask, saves_dt, pr),
         t)
-    x[inflow_mask] = vcat([data[field][:, :, floor(Int, t / saves_dt) + 1]
-                           for field in target_fields]...)[inflow_mask]
+    eval_x = copy(x)
+    max_data_idx = minimum(size(data[field], 3) for field in target_fields)
+    data_idx = if haskey(data, "dt")
+        clamp(searchsortedlast(data["dt"], t), 1, max_data_idx)
+    else
+        clamp(floor(Int, t / saves_dt) + 1, 1, max_data_idx)
+    end
+    inflow_values = vcat([data[field][:, :, data_idx] for field in target_fields]...)
+    eval_x[:, inflow_mask] = inflow_values[:, inflow_mask]
 
-    return ode_step(x,
+    return ode_step(eval_x,
         (mgn, ps, inputs, fields, meta, target_fields, target_dict,
             node_type, edge_features, senders, receivers, val_mask, pr),
         t)

@@ -130,7 +130,7 @@ function _validation_step(t::Tuple, sim_interval, data_interval)
 
     error = mean((prediction - gt) .^ 2; dims = 3)
 
-    return mean(error[mask])
+    return mean(error[:, mask])
 end
 
 ####################################################################
@@ -301,7 +301,7 @@ function init_train_step(strategy::SolverBatchTraining, t::Tuple, ta::Tuple)
 
     inputs = Dict{String, AbstractArray}(
         [typeof(data[field]) <: AbstractArray ?
-         (field, data[field][:, :, first(datapoint_interval)]) :
+         (field, data[field][:, :, min(size(data[field], 3), first(datapoint_interval))]) :
          (field, data[field]) for field in fields]
     )
 
@@ -463,8 +463,7 @@ function train_step(::DerivativeStrategy, t::Tuple)
 end
 
 function validation_step(::DerivativeStrategy, t::Tuple)
-    sim_interval = t[2]["dt"]
-    pop!(sim_interval)
+    sim_interval = t[2]["dt"][1:(end - 1)]
     data_interval = 1:(length(sim_interval))
 
     return _validation_step(t, sim_interval, data_interval)

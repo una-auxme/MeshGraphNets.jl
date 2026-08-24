@@ -36,7 +36,6 @@ import ProgressMeter: Progress
 import SciMLBase: ODEProblem
 
 import Base: @kwdef
-import HDF5: h5open, create_group, open_group
 import ProgressMeter: next!, update!, finish!
 import SciMLBase: solve, remake
 import Setfield: @set!
@@ -96,18 +95,19 @@ function calc_norms(dataset, device, args::Args)
     quantities = 0
     n_norms = Dict{String, Union{NormaliserOffline, NormaliserOnline}}()
     o_norms = Dict{String, Union{NormaliserOffline, NormaliserOnline}}()
+    float32(value) = value isa AbstractArray ? Float32.(value) : Float32(value)
 
     if haskey(dataset.meta, "edges")
         if haskey(dataset.meta["edges"], "data_min") &&
            haskey(dataset.meta["edges"], "data_max")
             e_norms = NormaliserOfflineMinMax(
-                Float32(dataset.meta["edges"]["data_min"]),
-                Float32(dataset.meta["edges"]["data_max"]), device)
+                float32(dataset.meta["edges"]["data_min"]),
+                float32(dataset.meta["edges"]["data_max"]), device)
         elseif haskey(dataset.meta["edges"], "data_mean") &&
                haskey(dataset.meta["edges"], "data_std")
             e_norms = NormaliserOfflineMeanStd(
-                Float32(dataset.meta["edges"]["data_mean"]),
-                Float32(dataset.meta["edges"]["data_std"]), device)
+                float32(dataset.meta["edges"]["data_mean"]),
+                float32(dataset.meta["edges"]["data_std"]), device)
         else
             e_norms = NormaliserOnline(
                 Float32, typeof(dataset.meta["dims"]) <: AbstractArray ?
@@ -139,8 +139,8 @@ function calc_norms(dataset, device, args::Args)
             # check for node feature norm
             if haskey(feature_meta, "target_min") && haskey(feature_meta, "target_max")
                 n_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0,
-                    Float32(feature_meta["target_min"]),
-                    Float32(feature_meta["target_max"]), device)
+                    float32(feature_meta["target_min"]),
+                    float32(feature_meta["target_max"]), device)
             else
                 n_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0, device)
             end
@@ -149,8 +149,8 @@ function calc_norms(dataset, device, args::Args)
                 if haskey(feature_meta, "output_target_min") &&
                    haskey(feature_meta, "output_target_max")
                     o_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0,
-                        Float32(feature_meta["output_target_min"]),
-                        Float32(feature_meta["output_target_max"]), device)
+                        float32(feature_meta["output_target_min"]),
+                        float32(feature_meta["output_target_max"]), device)
                 else
                     o_norms[feature] = NormaliserOfflineMinMax(0.0f0, 1.0f0, device)
                 end
@@ -161,19 +161,19 @@ function calc_norms(dataset, device, args::Args)
             if haskey(feature_meta, "data_min") && haskey(feature_meta, "data_max")
                 if haskey(feature_meta, "target_min") && haskey(feature_meta, "target_max")
                     n_norms[feature] = NormaliserOfflineMinMax(
-                        Float32(feature_meta["data_min"]),
-                        Float32(feature_meta["data_max"]),
-                        Float32(feature_meta["target_min"]),
-                        Float32(feature_meta["target_max"]), device)
+                        float32(feature_meta["data_min"]),
+                        float32(feature_meta["data_max"]),
+                        float32(feature_meta["target_min"]),
+                        float32(feature_meta["target_max"]), device)
                 else
                     n_norms[feature] = NormaliserOfflineMinMax(
-                        Float32(feature_meta["data_min"]),
-                        Float32(feature_meta["data_max"]), device)
+                        float32(feature_meta["data_min"]),
+                        float32(feature_meta["data_max"]), device)
                 end
             elseif haskey(feature_meta, "data_mean") && haskey(feature_meta, "data_std")
                 n_norms[feature] = NormaliserOfflineMeanStd(
-                    Float32(feature_meta["data_mean"]),
-                    Float32(feature_meta["data_std"]), device)
+                    float32(feature_meta["data_mean"]),
+                    float32(feature_meta["data_std"]), device)
             else
                 n_norms[feature] = NormaliserOnline(Float32, feature_meta["dim"], device;
                     max_acc = Float32(args.max_norm_steps))
@@ -185,20 +185,20 @@ function calc_norms(dataset, device, args::Args)
                     if haskey(feature_meta, "output_target_min") &&
                        haskey(feature_meta, "output_target_max")
                         o_norms[feature] = NormaliserOfflineMinMax(
-                            Float32(feature_meta["output_min"]),
-                            Float32(feature_meta["output_max"]),
-                            Float32(feature_meta["output_target_min"]),
-                            Float32(feature_meta["output_target_max"]), device)
+                            float32(feature_meta["output_min"]),
+                            float32(feature_meta["output_max"]),
+                            float32(feature_meta["output_target_min"]),
+                            float32(feature_meta["output_target_max"]), device)
                     else
                         o_norms[feature] = NormaliserOfflineMinMax(
-                            Float32(feature_meta["output_min"]),
-                            Float32(feature_meta["output_max"]), device)
+                            float32(feature_meta["output_min"]),
+                            float32(feature_meta["output_max"]), device)
                     end
                 elseif haskey(feature_meta, "output_mean") &&
                        haskey(feature_meta, "output_std")
                     o_norms[feature] = NormaliserOfflineMeanStd(
-                        Float32(feature_meta["output_mean"]),
-                        Float32(feature_meta["output_std"]), device)
+                        float32(feature_meta["output_mean"]),
+                        float32(feature_meta["output_std"]), device)
                 else
                     o_norms[feature] = NormaliserOnline(
                         Float32, feature_meta["dim"], device;
@@ -362,8 +362,8 @@ function train_mgn!(mgn::GraphNetwork, train_state, ds_train::Dataset, ds_valid:
     pr = Progress(args.epochs * args.steps; desc = "Training progress: ",
         dt = 1.0, barlen = 50, start = checkpoint, showspeed = true)
 
-    local tmp_loss = 0.0f0
     local avg_loss = 0.0f0
+    local avg_loss_count = 0
     fields = deleteat!(copy(ds_train.meta["feature_names"]),
         findall(x -> x == "node_type" || x == "mesh_pos" || x == "cells",
             ds_train.meta["feature_names"]))
@@ -388,8 +388,11 @@ function train_mgn!(mgn::GraphNetwork, train_state, ds_train::Dataset, ds_valid:
 
                 if step + data_idx > args.norm_steps
                     gs, losses = train_step(args.training_strategy, train_tuple)
-                    Lux.Training.apply_gradients!(train_state, gs[1])
-                    tmp_loss += sum(losses)
+                    #println(gs) # Why are there so many zeros in intervals in the gradients?
+                    train_state = Lux.Training.apply_gradients!(train_state, gs[1])
+                    mgn.train_state = train_state
+                    avg_loss += sum(losses)
+                    avg_loss_count += 1
 
                     update!(pr, step + data_idx;
                         showvalues = [
@@ -416,10 +419,8 @@ function train_mgn!(mgn::GraphNetwork, train_state, ds_train::Dataset, ds_valid:
 
             cp_progress += length(delta)
             step += length(delta)
-            tmp_loss /= length(delta)
-
             if step > args.norm_steps && cp_progress >= args.checkpoint
-                push!(df_train, [step, avg_loss / Float32(step / length(delta))])
+                push!(df_train, [step, avg_loss / Float32(max(avg_loss_count, 1))])
 
                 traj_idx = 1
                 valid_error = 0.0f0
@@ -473,6 +474,7 @@ function train_mgn!(mgn::GraphNetwork, train_state, ds_train::Dataset, ds_valid:
                 save_checkpoint!(
                     mgn, train_state.optimizer_state, df_train, df_valid, step, cp_path)
                 avg_loss = 0.0f0
+                avg_loss_count = 0
                 cp_progress = 0
             end
         end
