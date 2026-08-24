@@ -38,7 +38,7 @@ Data structure for the training, evaluation and test data inside a dataset.
 ## Arguments
 - `meta`: Metadata of the dataset.
 - `datafile`: Path of datafile.
-- `lock`: Used to prevent simultaneous acces to the datafile.
+- `lock`: Used to prevent simultaneous access to the datafile.
 """
 struct Dataset
     meta::Dict{String, Any}
@@ -538,7 +538,7 @@ Parses the edges that were read from the datafile. The format is a vector of pai
 ## Arguments
 - `edges`: Vector of pairs of node indices.
 - `node_type`: Array of node types from the datafile.
-- `excluded_node_types`: Vector of node types that should not be connected with edges.
+- `no_edges_node_types`: Vector of node types that should not be connected with edges.
 - `exclude_node_indices`: Vector of node indices that should not be connected with edges.
 
 ## Returns
@@ -641,7 +641,7 @@ function preprocess!(data, noise_fields, noise_stddevs, types_noisy, ts, device)
 end
 
 """
-    prepare_trajectory!(data, meta, device; types_noisy, noise_stddevs, ts)
+    prepare_trajectory!(data, meta, device)
 
 Transfers the data to the given device and configures the data if a derivative based strategy is used.
 
@@ -650,13 +650,11 @@ Transfers the data to the given device and configures the data if a derivative b
 - `meta`: Metadata of the dataset.
 - `device`: Device where the data should be loaded (see [Lux GPU Management](https://lux.csail.mit.edu/dev/manual/gpu_management#gpu-management)).
 
-## Keyword Arguments
-- `types_noisy`: Node types to which noise is added.
-- `noise_stddevs`: Array of standard deviations of the noise, where the length is either one if broadcasted or equal to the length of features.
-- `ts`: Training strategy that is used.
+The training strategy, noisy node types, and noise standard deviations are read from
+`meta`.
 
 ## Returns
-- Transfered data.
+- Transferred data.
 - Metadata of the dataset.
 """
 function prepare_trajectory!(data, meta, device::Function)

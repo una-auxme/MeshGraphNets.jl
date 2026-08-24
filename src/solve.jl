@@ -23,14 +23,16 @@ import ProgressMeter: ProgressUnknown
 import ChainRulesCore: @ignore_derivatives
 
 """
-    rollout(solver, mgn, initial_state, fields, meta, target_fields, target_dict, node_type, edge_features, senders, receivers, val_mask, inflow_mask, data, start, stop, dt, saves; show_progress = true)
+    rollout(solver, mgn, data, fields, meta, target_fields, target_dict, node_type,
+            edge_features, senders, receivers, val_mask, inflow_mask, start, stop,
+            dt, saves, pr = nothing)
 
 Solves the ODEProblem of the MGN with the given solver.
 
 ## Arguments
 - `solver`: Solver that is used for evaluating the system.
 - `mgn`: [GraphNetwork](@ref) that should be evaluated.
-- `initial_state`: Initial state of the system.
+- `data`: Simulation data containing the initial state and prescribed inflow values.
 - `fields`: Node features of the MGN.
 - `meta`: Metadata of the dataset.
 - `target_fields`: Output features of the MGN.
@@ -41,14 +43,11 @@ Solves the ODEProblem of the MGN with the given solver.
 - `receivers`: Vector of indices where each edge in the graph ends.
 - `val_mask`: Bitmask specifying which nodes should be updated.
 - `inflow_mask`: Vector of indices of nodes that are defined as inflow nodes.
-- `data`: Simulation data used for setting the inputs on the inflow nodes.
 - `start`: Start time of the simulation.
 - `stop`: Stop time of the simulation.
 - `dt`: If set, the solver will use fixed timesteps.
 - `saves`: Timesteps where the solution is saved at.
-
-## Keyword Arguments
-- `show_progress = true`: Whether a progress bar should be displayed.
+- `pr = nothing`: Optional progress meter updated during the rollout.
 
 ## Returns
 - Solution of the ODEProblem at the specified timesteps.

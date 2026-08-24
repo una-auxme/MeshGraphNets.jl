@@ -15,13 +15,16 @@ end
 """
     data_minmax(path)
 
-Calculates the minimum and maximum for each feature in the given part of the dataset.
+Calculates the minimum and maximum of each numeric feature across the training,
+validation, and test splits. For target features, it also calculates the extrema of
+their finite-difference derivatives.
 
 ## Arguments
 - `path`: Path to the dataset files.
 
 ## Returns
-- Minimum and maximum in training, validation and test set
+- Dictionary mapping feature names to `[minimum, maximum]`. Derivative statistics use
+  keys of the form `"target|<feature>"`.
 """
 function data_minmax(path)
     args = Args()
@@ -119,13 +122,16 @@ end
 """
     data_meanstd(path)
 
-Calculates the mean and standard deviation for each feature in the given part of the dataset.
+Calculates the mean and standard deviation of each numeric feature across the training,
+validation, and test splits. For target features, it also calculates statistics for
+their finite-difference derivatives.
 
 ## Arguments
 - `path`: Path to the dataset files.
 
 ## Returns
-- Mean and standard deviation in training, validation and test set
+- Dictionary mapping feature names to `(mean, standard deviation)`. Derivative
+  statistics use keys of the form `"target|<feature>"`.
 """
 function data_meanstd(path)
     args = Args()
@@ -236,7 +242,7 @@ Helper function to project a CartesianIndex onto the given dimension as a Linear
 
 ## Arguments
 - `dims`: Dimensions to where the CartesianIndex is projected onto.
-- `li`: CartesianIndex to convert.
+- `ci`: CartesianIndex to convert.
 
 ## Returns
 - Converted LinearIndex.
@@ -247,9 +253,9 @@ function ci_to_li(dims, ci)
 end
 
 """
-    li_to_ci(dims, li)
+    dims_to_li(dims, idxs)
 
-Helper function to proejct the given indices onto the given dimensions as a LinearIndex.
+Helper function to project the given indices onto the given dimensions as a LinearIndex.
 
 ## Arguments
 - `dims`: Dimensions to where the LinearIndex is projected onto.

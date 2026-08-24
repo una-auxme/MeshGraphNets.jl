@@ -20,21 +20,20 @@
 import Statistics: norm
 
 """
-    create_base_graph(data, type_size, type_min, device)
+    create_base_graph!(data, type_size, type_min, device)
 
-Constructs the parts of the node features and edge features that do not change during one trajectory.
+Constructs the node-type and edge data that do not change during one trajectory and
+stores them in `data`.
 
 ## Arguments
 - `data`: Data from the dataset containing one trajectory.
-- `type_size`: Depth of the node type matrix.
+- `type_size`: Maximum node-type value.
 - `type_min`: Offset of the node type matrix.
 - `device`: Device where the normaliser should be loaded (see [Lux GPU Management](https://lux.csail.mit.edu/dev/manual/gpu_management#gpu-management)).
 
 ## Returns
-- Onehot vector of the node types used for node features.
-- Vector of indices where each edge in the graph starts.
-- Vector of indices where each edge in the graph ends.
-- Array of edge features for each edge in the graph.
+- The edge-feature array stored in `data["edge_features"]`. The function also adds
+  `"node_type"`, `"senders"`, and `"receivers"` entries to `data`.
 """
 function create_base_graph!(data, type_size, type_min, device::Function)
     node_type = one_hot(

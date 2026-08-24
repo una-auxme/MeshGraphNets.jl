@@ -77,19 +77,20 @@ export train_network, eval_network, data_minmax, data_meanstd
 end
 
 """
-    calc_norms(dataset, device)
+    calc_norms(dataset, device, args)
 
 Initializes the normalisers based on the given dataset and its metadata.
 
 ## Arguments
-- `dataset`: Dataset on which the normalisers should be initialized on.
+- `dataset`: Dataset from which the normalisers should be initialized.
 - `device`: Device where the normaliser should be loaded (see [Lux GPU Management](https://lux.csail.mit.edu/dev/manual/gpu_management#gpu-management)).
+- `args`: Framework configuration, including the maximum number of online-normalisation steps.
 
 ## Returns
-- Sum of each dimension of feature.
-- Dictionary of each edge feature and its normaliser as key-value pair.
-- Dictionary of each node feature and its normaliser as key-value pair.
-- Dictionary of each output feature and its normaliser as key-value pair.
+- Sum of the dimensions of all node features.
+- Normaliser for the edge features.
+- Dictionary of node features and their normalisers as key-value pairs.
+- Dictionary of output features and their normalisers as key-value pairs.
 """
 function calc_norms(dataset, device, args::Args)
     quantities = 0
@@ -231,23 +232,26 @@ Starts the training process with the given configuration.
 - `steps = 10e6`: Number of training steps.
 - `checkpoint = 10000`: Number of steps after which checkpoints are created.
 - `norm_steps = 1000`: Number of steps before training (accumulate normalization stats).
-- `max_norm_steps = 10f6`: Number of steps after which no more normalization stats are collected.
+- `max_norm_steps = 10.0f6`: Number of steps after which no more normalization stats are collected.
+- `types_inflow = [4]`: Node types whose values are prescribed by the dataset during solver rollouts.
 - `types_updated = [0, 5]`: Array containing node types which are updated after each step.
 - `types_noisy = [0]`: Array containing node types which noise is added to.
 - `noise_stddevs = [0.0f0]`: Array containing the standard deviation of noise that is added to the target features.
 - `training_strategy = DerivativeTraining()`: Methods used for training. See [documentation](https://una-auxme.github.io/MeshGraphNets.jl/dev/strategies/).
 - `use_cuda = true`: Whether a GPU is used for training or not (if available). Currently only CUDA GPUs are supported.
-- `gpu_device = CUDA.device()`: Current CUDA device (aka GPU). See *nvidia-smi* for reference.
-- `cell_idxs = [0]`: Indices of cells that are plotted during validation (if enabled).
-- `use_valid = true`: Whether the last checkpoint of validation should be used, last training checkpoint otherwise.
+- `gpu_device = CUDA.device()` when CUDA is available, otherwise `nothing`: CUDA device used for training. See *nvidia-smi* for reference.
+- `cell_idxs = [0]`: Reserved cell indices; currently unused by the training loop.
+- `use_valid = true`: Shared checkpoint-selection setting; currently unused by the training loop.
 - `solver_valid = Tsit5()`: Which solver should be used for validation during training.
 - `solver_valid_dt = nothing`: If set, the solver for validation will use fixed timesteps.
-- `wandb_logger` = nothing: If set, a [Wandb](https://github.com/avik-pal/Wandb.jl) WandbLogger will be used for logging the training.
+- `wandb_logger = nothing`: If set, a [Wandb](https://github.com/avik-pal/Wandb.jl) `WandbLogger` will be used for logging the training.
 - `reset_valid = false`: If set, the previous minimal validation loss will be overwritten.
+- `ad = :Zygote`: Automatic-differentiation backend. Currently only `:Zygote` is supported.
 
 ## Training Strategies
 - `DerivativeTraining`
 - `SolverTraining`
+- `SolverBatchTraining`
 - `MultipleShooting`
 
 See [CylinderFlow Example](https://una-auxme.github.io/MeshGraphNets.jl/dev/cylinder_flow) for reference.
@@ -484,29 +488,31 @@ function train_mgn!(mgn::GraphNetwork, train_state, ds_train::Dataset, ds_valid:
 end
 
 """
-    eval_network(ds_path, cp_path, out_path, solver; start, stop, dt, saves, mse_steps, kws...)
+    eval_network(ds_path, cp_path, out_path, solver = nothing;
+                 start, stop, dt = nothing, saves, mse_steps, kws...)
 
 Starts the evaluation process with the given configuration.
 
 ## Arguments
 - `ds_path`: Path to the dataset folder.
-- `cp_path`: Path where checkpoints are being saved to.
-- `out_path`: Path where the result is being saved to.
-- `solver`: Solver that is used for evaluating the system.
+- `cp_path`: Path from which checkpoints are loaded.
+- `out_path`: Path where the results are saved.
+- `solver = nothing`: Solver that is used for evaluating the system.
+
+## Keyword Arguments
 - `start`: Start time of the simulation.
 - `stop`: Stop time of the simulation.
 - `dt = nothing`: If provided, changes the solver to use fixed step sizes.
 - `saves`: Time steps where the solution is saved at.
 - `mse_steps`: Time steps where the relative error is printed at.
-- `kws`: Keyword arguments that customize the training process. **The configuration of the system has to be the same as during training**.
-
-## Keyword Arguments
+- `kws`: Additional keyword arguments that customize evaluation. **The network configuration has to be the same as during training**.
 - `mps = 15`: Number of message passing steps.
 - `layer_size = 128`: Latent size of the hidden layers inside MLPs.
 - `hidden_layers = 2`: Number of hidden layers inside MLPs.
+- `types_inflow = [4]`: Node types whose values are prescribed by the dataset during the rollout.
 - `types_updated = [0, 5]`: Array containing node types which are updated after each step.
-- `use_cuda = true`: Whether a GPU is used for training or not (if available). Currently only CUDA GPUs are supported.
-- `gpu_device = CUDA.device()`: Current CUDA device (aka GPU). See *nvidia-smi* for reference.
+- `use_cuda = true`: Whether a GPU is used for evaluation (if available). Currently only CUDA GPUs are supported.
+- `gpu_device = CUDA.device()` when CUDA is available, otherwise `nothing`: CUDA device used for evaluation. See *nvidia-smi* for reference.
 - `use_valid = true`: Whether the last checkpoint with the minimal validation loss should be used.
 """
 function eval_network(ds_path, cp_path::String, out_path::String, solver = nothing;

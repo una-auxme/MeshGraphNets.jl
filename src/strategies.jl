@@ -36,7 +36,7 @@ Returns the delta between samples in the training data.
 
 ## Arguments
 - `strategy`: Used training strategy.
-- Trajectory length (used for derivative based strategies).
+- `trajectory_length`: Trajectory length (used for derivative-based strategies).
 
 ## Returns
 - Delta between samples in the training data.
@@ -89,7 +89,7 @@ Performs validation of a single trajectory. Should be overwritten by training st
 - `t`: Tuple containing the variables necessary for validation.
 
 ## Returns
-- See [_validation_step](@ref).
+- Loss calculated from the difference between the ground truth and prediction.
 """
 function validation_step(strategy::TrainingStrategy, ::Tuple)
     throw(ArgumentError("Unknown training strategy: $strategy. See [documentation](https://una-auxme.github.io/MeshGraphNets.jl/dev/strategies/) for available strategies."))
@@ -107,8 +107,6 @@ Inner function for validation of a single trajectory.
 
 ## Returns
 - Loss calculated on the difference between ground truth and prediction (via mse).
-- Ground truth data with `data_interval` as timesteps.
-- Prediction data with `data_interval` as timesteps.
 """
 function _validation_step(t::Tuple, sim_interval, data_interval)
     mgn, data, meta, _, solver, solver_dt, fields, node_type, edge_features,
@@ -225,7 +223,8 @@ function validation_step(strategy::SolverStrategy, t::Tuple)
 end
 
 """
-    SolverTraining(tstart, dt, tstop, solver; sense = GaussAdjoint(autojacvec = ZygoteVJP()), solargs...)
+    SolverTraining(tstart, dt, tstop, solver;
+                   sense = GaussAdjoint(autojacvec = ZygoteVJP()), solargs...)
 
 The default solver based training that is normally used for NeuralODEs.
 Simulates the system from `tstart` to `tstop` and calculates the loss based on the difference between the prediction and the ground truth at the timesteps `tstart:dt:tstop`.
@@ -237,7 +236,7 @@ Simulates the system from `tstart` to `tstop` and calculates the loss based on t
 - `solver`: Solver that is used for simulating the system.
 
 ## Keyword Arguments
-- `sense = GaussAdjoint(autojacvec = ZygoteVJP())`: The sensitivity algorithm that is used for caluclating the sensitivities.
+- `sense = GaussAdjoint(autojacvec = ZygoteVJP())`: The sensitivity algorithm used for calculating sensitivities. Checkpointing is enabled by default for adaptive solvers.
 - `solargs`: Keyword arguments that are passed on to the solver.
 """
 struct SolverTraining <: SolverStrategy
@@ -259,6 +258,24 @@ function SolverTraining(tstart::Float32,
     SolverTraining(tstart, dt, tstop, solver, sense, solargs)
 end
 
+"""
+    SolverBatchTraining(tstart, dt, tstop, interval_size, solver;
+                        sense = GaussAdjoint(autojacvec = ZygoteVJP()), solargs...)
+
+Solver-based training that splits the trajectory into overlapping intervals and performs a
+separate training step for each interval. Consecutive intervals share their boundary point.
+
+## Arguments
+- `tstart`: Start time of the simulation.
+- `dt`: Interval at which the simulation is saved.
+- `tstop`: Stop time of the simulation.
+- `interval_size`: Number of datapoints in each interval.
+- `solver`: Solver that is used for simulating the system.
+
+## Keyword Arguments
+- `sense = GaussAdjoint(autojacvec = ZygoteVJP())`: The sensitivity algorithm used for calculating sensitivities. Checkpointing is enabled by default for adaptive solvers.
+- `solargs`: Keyword arguments that are passed on to the solver.
+"""
 struct SolverBatchTraining <: SolverStrategy
     tstart::Float32
     dt::Float32
@@ -341,7 +358,9 @@ function train_step(strategy::SolverBatchTraining, t::Tuple)
 end
 
 """
-    MultipleShooting(tstart, dt, tstop, solver, interval_size, continuity_term = 100; sense = GaussAdjoint(autojacvec = ZygoteVJP(), checkpointing = true), solargs...)
+    MultipleShooting(tstart, dt, tstop, interval_size, solver;
+                     sense = GaussAdjoint(autojacvec = ZygoteVJP()),
+                     continuity_term = 100, solargs...)
 
 Similar to SolverTraining, but splits the trajectory into intervals that are solved independently and then combines them for loss calculation.
 Useful if the network tends to get stuck in a local minimum if SolverTraining is used.
@@ -350,12 +369,12 @@ Useful if the network tends to get stuck in a local minimum if SolverTraining is
 - `tstart`: Start time of the simulation.
 - `dt`: Interval at which the simulation is saved.
 - `tstop`: Stop time of the simulation.
+- `interval_size`: Number of datapoints in each independently solved interval.
 - `solver`: Solver that is used for simulating the system.
 
 ## Keyword Arguments
-- `sense = GaussAdjoint(autojacvec = ZygoteVJP(), checkpointing = true)`: The sensitivity algorithm that is used for caluclating the sensitivities.
-- `interval_size`: Size of the intervals (i.e. number of datapoints in one interval).
-- `continuity_term = 100`: Factor by which the error between points of concurrent intervals is multiplied.
+- `sense = GaussAdjoint(autojacvec = ZygoteVJP())`: The sensitivity algorithm used for calculating sensitivities. Checkpointing is enabled by default for adaptive solvers.
+- `continuity_term = 100`: Factor by which the error between points of consecutive intervals is multiplied.
 - `solargs`: Keyword arguments that are passed on to the solver.
 """
 struct MultipleShooting <: SolverStrategy
@@ -470,14 +489,14 @@ function validation_step(::DerivativeStrategy, t::Tuple)
 end
 
 """
-    DerivativeTraining(; window_size = 0)
+    DerivativeTraining(; window_size = 0, random = true)
 
 Compares the prediction of the system with the derivative from the data (via finite differences).
-Useful for initial training of the system since it it faster than training with a solver.
+Useful for initial training of the system since it is faster than training with a solver.
 
 ## Keyword Arguments
 - `window_size = 0`: Number of steps from each trajectory (starting at the beginning) that are used for training. If the number is zero then the whole trajectory is used.
-- `random = true`: Whether the derivatives of the data should shuffled before the training.
+- `random = true`: Whether the derivative samples should be shuffled before training.
 """
 struct DerivativeTraining <: DerivativeStrategy
     window_size::Integer
