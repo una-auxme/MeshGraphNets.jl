@@ -1,21 +1,38 @@
+# Copyright 2020 DeepMind Technologies Limited. All Rights Reserved.
 #
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Modified from the original MeshGraphNets software for this Julia project.
 # Copyright (c) 2023 Julian Trommer
-# Licensed under the MIT license. See LICENSE file in the project root for details.
-#
+# Copyright (c) 2025 Luca Kahlenberg
+# SPDX-License-Identifier: Apache-2.0
+# See LICENSE-APACHE and NOTICE for details.
 
 import ProgressMeter: ProgressUnknown
 
 import ChainRulesCore: @ignore_derivatives
 
 """
-    rollout(solver, mgn, initial_state, fields, meta, target_fields, target_dict, node_type, edge_features, senders, receivers, val_mask, inflow_mask, data, start, stop, dt, saves; show_progress = true)
+    rollout(solver, mgn, data, fields, meta, target_fields, target_dict, node_type,
+            edge_features, senders, receivers, val_mask, inflow_mask, start, stop,
+            dt, saves, pr = nothing)
 
 Solves the ODEProblem of the MGN with the given solver.
 
 ## Arguments
 - `solver`: Solver that is used for evaluating the system.
 - `mgn`: [GraphNetwork](@ref) that should be evaluated.
-- `initial_state`: Initial state of the system.
+- `data`: Simulation data containing the initial state and prescribed inflow values.
 - `fields`: Node features of the MGN.
 - `meta`: Metadata of the dataset.
 - `target_fields`: Output features of the MGN.
@@ -26,32 +43,29 @@ Solves the ODEProblem of the MGN with the given solver.
 - `receivers`: Vector of indices where each edge in the graph ends.
 - `val_mask`: Bitmask specifying which nodes should be updated.
 - `inflow_mask`: Vector of indices of nodes that are defined as inflow nodes.
-- `data`: Simulation data used for setting the inputs on the inflow nodes.
 - `start`: Start time of the simulation.
 - `stop`: Stop time of the simulation.
 - `dt`: If set, the solver will use fixed timesteps.
 - `saves`: Timesteps where the solution is saved at.
-
-## Keyword Arguments
-- `show_progress = true`: Whether a progress bar should be displayed.
+- `pr = nothing`: Optional progress meter updated during the rollout.
 
 ## Returns
 - Solution of the ODEProblem at the specified timesteps.
 - Timesteps corresponding to the solution.
 """
-function rollout(solver, mgn::GraphNetwork, initial_state, fields, meta, target_fields,
+function rollout(solver, mgn::GraphNetwork, data, fields, meta, target_fields,
         target_dict, node_type, edge_features, senders, receivers, val_mask,
-        inflow_mask, data, start, stop, dt, saves; show_progress = true)
-    pr = show_progress ? ProgressUnknown(; showspeed = true) : nothing
-
+        inflow_mask, start, stop, dt, saves, pr = nothing)
     interval = (start, stop)
-    x0 = vcat([initial_state[field] for field in target_fields]...)
-    inputs = deepcopy(initial_state)
-    for i in keys(target_dict)
-        delete!(inputs, i)
-    end
+    x0 = vcat([typeof(data[field]) <: AbstractArray ? data[field][:, :, 1] :
+               data[field] for field in target_fields]...)
+    inputs = Dict{String, AbstractArray}(
+        [typeof(data[field]) <: AbstractArray ? (field, data[field][:, :, 1]) :
+         (field, data[field]) for field in fields]
+    )
+
     prob = ODEProblem(ode_func_eval, x0, interval,
-        (mgn, mgn.ps, data, inputs, fields, meta, target_fields,
+        (mgn, mgn.train_state.parameters, data, inputs, fields, meta, target_fields,
             target_dict, node_type, edge_features, senders, receivers,
             val_mask, inflow_mask, saves[2] - saves[1], pr))
     if isnothing(dt)
@@ -60,7 +74,7 @@ function rollout(solver, mgn::GraphNetwork, initial_state, fields, meta, target_
         sol = solve(prob, solver; adaptive = false, dt = dt, saveat = saves)
     end
 
-    if show_progress
+    if !isnothing(pr)
         finish!(pr)
     end
 
@@ -104,8 +118,14 @@ function ode_func_train(x,
         t)
     bx = Zygote.Buffer(x)
     bx[:, :] = x
-    bx[inflow_mask] = vcat([data[field][:, :, floor(Int, t / strategy.dt) + 1]
-                            for field in target_fields]...)[inflow_mask]
+    max_data_idx = minimum(size(data[field], 3) for field in target_fields)
+    data_idx = if haskey(data, "dt")
+        clamp(searchsortedlast(data["dt"], t), 1, max_data_idx)
+    else
+        clamp(floor(Int, (t - strategy.tstart) / strategy.dt) + 1, 1, max_data_idx)
+    end
+    inflow_values = vcat([data[field][:, :, data_idx] for field in target_fields]...)
+    bx[:, inflow_mask] = inflow_values[:, inflow_mask]
 
     return ode_step(bx,
         (mgn, ps, inputs, fields, meta, target_fields, target_dict,
@@ -148,10 +168,17 @@ function ode_func_eval(x,
         (mgn, ps, data, inputs, fields, meta, target_fields, target_dict, node_type,
             edge_features, senders, receivers, val_mask, inflow_mask, saves_dt, pr),
         t)
-    x[inflow_mask] = vcat([data[field][:, :, floor(Int, t / saves_dt) + 1]
-                           for field in target_fields]...)[inflow_mask]
+    eval_x = copy(x)
+    max_data_idx = minimum(size(data[field], 3) for field in target_fields)
+    data_idx = if haskey(data, "dt")
+        clamp(searchsortedlast(data["dt"], t), 1, max_data_idx)
+    else
+        clamp(floor(Int, t / saves_dt) + 1, 1, max_data_idx)
+    end
+    inflow_values = vcat([data[field][:, :, data_idx] for field in target_fields]...)
+    eval_x[:, inflow_mask] = inflow_values[:, inflow_mask]
 
-    return ode_step(x,
+    return ode_step(eval_x,
         (mgn, ps, inputs, fields, meta, target_fields, target_dict,
             node_type, edge_features, senders, receivers, val_mask, pr),
         t)
@@ -197,14 +224,15 @@ function ode_step(x,
 
     graph = build_graph(
         mgn, inputs, fields, 1, node_type, edge_features, senders, receivers)
-    output, st = mgn.model(graph, ps, mgn.st)
-    mgn.st = st
+
+    output, _ = mgn.train_state.model(graph, ps, mgn.train_state.states)
 
     indices = [meta["features"][tf]["dim"] for tf in target_fields]
 
     buf = Zygote.Buffer(output)
     for i in eachindex(target_fields)
-        buf[(sum(indices[1:(i - 1)]) + 1):sum(indices[1:i]), :] = inverse_data(
+        buf[
+            (sum(indices[1:(i - 1)]) + 1):sum(indices[1:i]), :] = inverse_data(
             mgn.o_norm[target_fields[i]],
             output[(sum(indices[1:(i - 1)]) + 1):sum(indices[1:i]), :])
     end

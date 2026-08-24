@@ -6,8 +6,9 @@
 GraphNetwork
 build_model
 step!
-save!
-load
+set_training!
+save_checkpoint!
+load_checkpoint
 ```
 
 ## FeatureGraph
@@ -32,5 +33,4 @@ triangles_to_edges
 parse_edges
 one_hot
 minmaxnorm
-mse_reduce
 ```

@@ -1,384 +1,497 @@
+# Copyright 2020 DeepMind Technologies Limited. All Rights Reserved.
 #
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Modified from the original MeshGraphNets software for this Julia project.
 # Copyright (c) 2023 Julian Trommer
-# Licensed under the MIT license. See LICENSE file in the project root for details.
-#
+# Copyright (c) 2024 Leonard Heber
+# Copyright (c) 2025 Luca Kahlenberg
+# SPDX-License-Identifier: Apache-2.0
+# See LICENSE-APACHE and NOTICE for details.
+
+using HDF5
+using JLD2
 
 import Distributions: Normal
-import HDF5: Group
 import Random: MersenneTwister
-import TFRecord: Example
 
-import HDF5: read_dataset
-import JLD2: jldopen
 import JSON: parse
-import Random: seed!, make_seed, shuffle
-import TFRecord: read
+import Random: seed!, shuffle
 
 include("strategies.jl")
 
 """
-    Dataset(file, file_valid, meta, ch, ch_valid, data, data_valid, cs, current, current_valid)
+    Dataset(meta, datafile, lock)
 
 Data structure for the training, evaluation and test data inside a dataset.
 
 ## Arguments
-- `file`: Path of training or test data file (depending on the function call to [load_dataset](@ref)).
-- `file_valid`: Path of validation data file.
 - `meta`: Metadata of the dataset.
-- `ch`: Channel that reads trajectories from the data file.
-- `ch_valid`: Channel that reads trajectories from the validation data file.
-- `data`: Dictionary that stores trajectories that were already read from the data file.
-- `data_valid`: Dictionary that stores trajectories that were already read from the validation data file.
-- `cs`: Size of the data channels.
-- `current`: Index of current trajectory.
-- `current_valid`: Index of current validation trajectory.
+- `datafile`: Path of datafile.
+- `lock`: Used to prevent simultaneous access to the datafile.
 """
-mutable struct Dataset
-    file::String
-    file_valid::String
+struct Dataset
     meta::Dict{String, Any}
-    ch::Union{Channel{Example}, Channel{Dict}}
-    ch_valid::Union{Nothing, Channel{Example}, Channel{Dict}}
-    data::Union{Nothing, Dict{Int, Dict}}
-    data_valid::Union{Nothing, Dict{Int, Dict}}
-    cs::Integer
-    current::Integer
-    current_valid::Integer
+    datafile::String
+    lock::ReentrantLock
 end
 
 """
-    parse_data(data, meta)
+    Dataset(datafile, metafile, args)
 
-Converts a TFRecord.Example into a Dictionary with feature names and their data as key-value pairs.
+Creates a [Dataset](@ref) with the given files.
 
 ## Arguments
-- `data`: TFRecord.Example that was read from the data file.
-- `meta`: Metadata of the dataset.
-
-## Returns
-- Dictionary of feature names and data as key-value pairs.
+- `datafile`: Path of datafile.
+- `metafile`: Path of metadata file.
+- `args`: Arguments of the framework.
 """
-function parse_data(data::Example, meta::Dict{String, Any})
-    out = Dict{String, AbstractArray}()
-    for (key, value) in meta["features"]
-        d = reinterpret(getfield(Base, Symbol(uppercasefirst(value["dtype"]))),
-            data.features.feature[key].kind.value.value[])
-        dims = Tuple(reverse(replace(
-            value["shape"], -1 => abs(reduce(div, value["shape"]; init = length(d))))))
-        d = reshape(d, dims)
-        if value["type"] == "static"
-            d = repeat(d, 1, 1, meta["trajectory_length"])
-        end
-        out[key] = d
+function Dataset(datafile::String, metafile::String, args)
+    if !isfile(datafile)
+        throw(ArgumentError("Invalid datafile: $datafile"))
+    elseif !endswith(datafile, ".jld2") && !endswith(datafile, ".h5")
+        throw(ArgumentError("Invalid file format for datafile: $datafile. Possible formats are [.jld2, .h5]"))
     end
-    return out
+    if !isfile(metafile)
+        throw(ArgumentError("Invalid metafile: $metafile"))
+    elseif !endswith(metafile, ".json")
+        throw(ArgumentError("Invalid file format for metafile: $metafile. Possible formats are [.json]"))
+    end
+
+    meta = parse(Base.read(metafile, String))
+    keys_traj = keystraj(datafile)
+    meta["n_trajectories"] = length(keys_traj)
+    meta["keys_trajectories"] = keys_traj
+    merge!(meta, Dict(String(key) => getfield(args, key) for key in propertynames(args)))
+
+    Dataset(meta, datafile, ReentrantLock())
 end
 
 """
-    load_dataset(path, is_training)
+    Dataset(split, path, args)
 
-Loads the training & validation data or test data depending on the given argument.
+Creates a [Dataset](@ref) with the given split type from the files of the given path.
 
 ## Arguments
-- `path`: Path to the dataset.
-- `is_training`: Whether the data should be loaded for training or for evaluation.
-
-## Returns
-- [Dataset](@ref) containing the data and metadata.
+- `split`: Symbol representing the type of data; possible values are: `[:train, :valid, :test]`.
+- `path`: Path to the data and metadata file.
+- `args`: Arguments of the framework.
 """
-function load_dataset(path::String, is_training::Bool)
-    seed!(1234)
+function Dataset(split::Symbol, path::String, args)
+    if split != :train && split != :valid && split != :test
+        throw(ArgumentError("Invalid symbol for dataset: $split. Possible values are [:train, :valid, :test]"))
+    end
+    if !isfile(joinpath(path, "meta.json"))
+        throw(ArgumentError("Metafile not found in path: $path. Check that your metafile is named \"meta.json\""))
+    end
 
-    filename = is_training ? "train" : "test"
+    meta = parse(Base.read(joinpath(path, "meta.json"), String))
+    datafile = get_file(split, path)
+    keys_traj = keystraj(datafile)
+    meta["n_trajectories"] = length(keys_traj)
+    meta["keys_trajectories"] = keys_traj
+    merge!(meta, Dict(String(key) => getfield(args, key) for key in propertynames(args)))
 
-    if isfile(joinpath(path, filename * ".tfrecord"))
-        file = filename * ".tfrecord"
-    elseif isfile(joinpath(path, filename * ".jld2"))
-        file = filename * ".jld2"
+    Dataset(meta, datafile, ReentrantLock())
+end
+
+function get_file(split::Symbol, path::String)
+    filename = String(split)
+    if isfile(joinpath(path, "$filename.jld2"))
+        return joinpath(path, "$filename.jld2")
+    elseif isfile(joinpath(path, "$filename.h5"))
+        return joinpath(path, "$filename.h5")
     else
-        file = filename * ".h5"
+        throw(ArgumentError("No datafile for $filename was found at the given path: $path"))
+    end
+end
+
+function keystraj(datafile::String)
+    if endswith(datafile, ".jld2")
+        return jldopen(datafile, "r") do file
+            collect(keys(file))
+        end
+    elseif endswith(datafile, ".h5")
+        return h5open(datafile, "r") do file
+            collect(keys(file))
+        end
+    end
+    throw(ArgumentError("Invalid datafile format: $datafile"))
+end
+
+function load_traj(ds::Dataset, key::String)
+    return lock(ds.lock) do
+        if endswith(ds.datafile, ".jld2")
+            return JLD2.load(ds.datafile, key)
+        end
+        return h5open(ds.datafile, "r") do file
+            Base.read(open_group(file, key))
+        end
+    end
+end
+
+MLUtils.numobs(ds::Dataset) = ds.meta["n_trajectories"]
+
+function MLUtils.getobs!(buffer, ds::Dataset, idx)
+    key = ds.meta["keys_trajectories"][idx]
+
+    traj = load_traj(ds, key)
+
+    set_meta!(buffer, ds, traj)
+
+    for fn in ds.meta["feature_names"]
+        alloc_traj!(buffer, ds, fn)
+
+        match_data = match_keys(ds, traj, fn)
+
+        set_traj_data!(buffer, match_data, ds, fn)
+    end
+    set_edges!(buffer, ds, traj)
+
+    prepare_trajectory!(buffer, ds.meta, ds.meta["device"])
+
+    buffer["mask"] = Int32.(findall(
+        x -> x in ds.meta["types_updated"], buffer["node_type"][1, :, 1])) |>
+                     ds.meta["device"]
+    buffer["inflow_mask"] = Int32.(findall(
+        x -> x in ds.meta["types_inflow"], buffer["node_type"][1, :, 1])) |>
+                            ds.meta["device"]
+
+    buffer["val_mask"] = Float32.(map(
+        x -> x in ds.meta["types_updated"], buffer["node_type"][:, :, 1]))
+    buffer["val_mask"] = repeat(
+        buffer["val_mask"], sum(size(buffer[field], 1)
+        for field in ds.meta["target_features"]), 1) |>
+                         ds.meta["device"]
+
+    create_base_graph!(buffer, ds.meta["features"]["node_type"]["data_max"],
+        ds.meta["features"]["node_type"]["data_min"], ds.meta["device"])
+
+    return buffer
+end
+
+function MLUtils.getobs(ds::Dataset, idx)
+    traj_dict = Dict{String, Any}()
+
+    getobs!(traj_dict, ds, idx)
+
+    return traj_dict
+end
+
+function set_meta!(traj_dict::Dict{String, Any}, ds::Dataset, traj::Dict{String, Any})
+    dt = ds.meta["dt"]
+    tl = ds.meta["trajectory_length"]
+    dims = ds.meta["dims"]
+
+    if typeof(dt) <: AbstractFloat
+        if tl == -1
+            throw(ArgumentError("The metadata \"dt\" was specified as static and \"trajectory_length\" as -1 inside the metafile. You need to specify one of them as a vector with the length equal to the number of steps to infer the other one."))
+        elseif typeof(tl) <: Integer
+            dt = range(0.0, dt * (tl - 1); step = dt)
+        elseif (typeof(tl)) == String
+            tl = traj[tl]
+            dt = range(0.0, dt * (tl - 1); step = dt)
+        else
+            throw(ArgumentError("The metadata \"trajectory_length\" is invalid. Possible values are: [-1 (for inferring the length), Integer (for specifying the length), String (as key inside the datafile)]"))
+        end
+    elseif typeof(dt) == String
+        dt = traj[dt]
+        if (typeof(tl)) == String
+            tl = traj[tl]
+        elseif tl == -1
+            if dt isa Number || length(dt) == 1
+                throw(ArgumentError("The metadata \"dt\" contains a static time delta and \"trajectory_length\" is -1. The trajectory length cannot be inferred."))
+            else
+                tl = length(dt)
+            end
+        elseif !(typeof(tl) <: Integer)
+            throw(ArgumentError("The metadata \"trajectory_length\" is invalid. Possible values are: [-1 (for inferring the length), Integer (for specifying the length), String (as key inside the datafile)]"))
+        end
+        if dt isa Number || length(dt) == 1
+            static_dt = dt isa Number ? dt : only(dt)
+            dt = range(0.0, static_dt * (tl - 1); step = static_dt)
+        end
+    else
+        throw(ArgumentError("The metadata \"dt\" is invalid. Possible values are: [Float (for specifying the static time delta), String (as key inside the datafile)]"))
     end
 
-    if endswith(file, "tfrecord")
-        meta = parse(Base.read(joinpath(path, "meta.json"), String))
-
-        ds = Dataset(
-            joinpath(path, file),
-            joinpath(path, "valid.tfrecord"),
-            meta,
-            read(joinpath(path, file); channel_size = 10),
-            is_training ? read(joinpath(path, "valid.tfrecord"); channel_size = 10) :
-            nothing,
-            nothing,
-            nothing,
-            10,
-            0,
-            0
-        )
-    elseif endswith(file, "jld2") || endswith(file, "h5")
-        meta = parse(Base.read(joinpath(path, "meta.json"), String))
-
-        is_jld = endswith(file, "jld2")
-
-        if is_jld
-            sl = Base.SimpleLogger(Base.CoreLogging.Error)
-            Base.with_logger(sl) do
-                datafile = jldopen(joinpath(path, file), "r")
+    if typeof(dims) == String
+        dims = traj[dims]
+    end
+    if typeof(dims) <: Integer
+        if haskey(ds.meta, "n_nodes")
+            n_nodes = ds.meta["n_nodes"]
+            if typeof(n_nodes) == String
+                n_nodes = traj[n_nodes]
+            elseif !(typeof(n_nodes) <: Integer)
+                throw(ArgumentError("The metadata \"n_nodes\" is invalid. Possible values are: [Integer (for specifying the number of nodes), String (as key inside the datafile)]"))
             end
         else
-            datafile = h5open(joinpath(path, file), "r")
+            throw(ArgumentError("The metadata \"dims\" is specified as Integer but no metadata \"n_nodes\" was provided. The number of nodes can only be inferred from a vector of dimensions. Either provide the number of nodes or use a vector of static dimensions."))
         end
-
-        meta["n_trajectories"] = length(keys(datafile))
-        data_keys = keys(datafile)
-        close(datafile)
-        if is_training
-            data_keys_valid = nothing
-            if is_jld
-                jldopen(joinpath(path, "valid.jld2"), "r") do fv
-                    meta["n_trajectories_valid"] = length(keys(fv))
-                    data_keys_valid = keys(fv)
+    elseif typeof(dims) <: AbstractArray && all(x -> typeof(x) <: Integer, dims)
+        if any(x -> x == -1, dims)
+            if haskey(ds.meta, "n_nodes")
+                n_nodes = ds.meta["n_nodes"]
+                if typeof(n_nodes) == String
+                    n_nodes = traj[n_nodes]
+                elseif !(typeof(n_nodes) <: Integer)
+                    throw(ArgumentError("The metadata \"n_nodes\" is invalid. Possible values are: [Integer (for specifying the number of nodes), String (as key inside the datafile)]"))
                 end
             else
-                h5open(joinpath(path, "valid.h5"), "r") do fv
-                    meta["n_trajectories_valid"] = length(keys(fv))
-                    data_keys_valid = keys(fv)
-                end
+                throw(ArgumentError("The metadata \"dims\" contains -1 (for inferring dimensions) but no metadata \"n_nodes\" was provided. The number of nodes can only be inferred from a vector of dimensions with positive values. Either provide the number of nodes or use a vector of static positive dimensions."))
             end
-            ch_valid = read_h5!(joinpath(path, is_jld ? "valid.jld2" : "valid.h5"),
-                data_keys_valid, meta, is_jld)
+            if haskey(ds.meta, "dims_key")
+                dims_file = traj[ds.meta["dims_key"]]
+                if length(dims_file) != length(dims)
+                    throw(ArgumentError("The size of the metadata \"dims\" vector is not equal the size of the dims inside the datafile: size(dims_meta) = $dims, size(dims_file) = $dims_file"))
+                else
+                    dims = dims_file
+                end
+            else
+                throw(ArgumentError("The metadata \"dims\" contains -1 (for inferring dimensions) but no metadata \"dims_key\" for reading the dimensions from the datafile was provided."))
+            end
         else
-            ch_valid = nothing
+            n_nodes = prod(dims)
         end
-
-        ch = read_h5!(joinpath(path, file), data_keys, meta, is_jld)
-
-        ds = Dataset(
-            joinpath(path, file),
-            joinpath(path, is_jld ? "valid.jld2" : "valid.h5"),
-            meta,
-            ch,
-            ch_valid,
-            Dict{Int, Dict}(),
-            Dict{Int, Dict}(),
-            meta["trajectory_length"],
-            0,
-            0
-        )
     else
-        throw(ArgumenError(path *
-                           " does not contain a $filename.tfrecord or a $filename.h5 file"))
+        throw(ArgumentError("The metadata \"dims\" is invalid. Possible values are: [Integer (for specifying the dimensions), Vector{Integer} (for specifying nodes in each dimension)]"))
     end
 
-    return ds
+    traj_dict["dt"] = Float32.(dt)
+    traj_dict["trajectory_length"] = tl
+    traj_dict["n_nodes"] = n_nodes
+    traj_dict["dims"] = dims
 end
 
-"""
-    read_h5!(file, data_keys, meta, is_jld)
+function alloc_traj!(traj_dict::Dict{String, Any}, ds::Dataset, fn::String)
+    dim = haskey(ds.meta["features"][fn], "dim") ? ds.meta["features"][fn]["dim"] : 1
+    if ds.meta["features"][fn]["type"] == "static"
+        tl = 1
+    elseif ds.meta["features"][fn]["type"] == "dynamic"
+        tl = traj_dict["trajectory_length"]
+    else
+        throw(ArgumentError("feature type of feature \"$fn\" must be static or dynamic"))
+    end
+    if !haskey(traj_dict, fn)
+        traj_dict[fn] = zeros(
+            getfield(Base, Symbol(uppercasefirst(ds.meta["features"][fn]["dtype"]))),
+            dim, traj_dict["n_nodes"], tl)
+    end
+end
 
-Reads the given data file and returns the data of the trajectories in individual dictionaires inside the returned Channel.
+function match_keys(ds::Dataset, traj::Dict{String, Any}, fn::String)
+    if haskey(ds.meta["features"][fn], "split") && ds.meta["features"][fn]["split"]
+        rx = Regex(replace(
+            replace(replace(ds.meta["features"][fn]["key"], "[" => "\\["),
+                "]" => "\\]"),
+            "%d" => "\\d+") * "\\[\\d+\\]")
+    else
+        rx = Regex(replace(
+            replace(replace(ds.meta["features"][fn]["key"], "[" => "\\["),
+                "]" => "\\]"),
+            "%d" => "\\d+"))
+    end
 
-This function includes:
-- Parsing each feature based on the given metadata.
-- Constructing the mesh based on the dimensions given in the metadata.
+    match_data = Dict()
 
-## Arguments
-- `file`: Path and name of the data file.
-- `data_keys`: Keys of the trajectories inside the data file.
-- `meta`: Metadata of the dataset.
-- `is_jld`: Determinse the file format of the data files. Set to true if the files are in the JLD2 format, otherwise the HDF5 format is used.
+    rx_match = eachmatch.(rx, keys(traj))
+    deleteat!(rx_match, findall(x -> length(collect(x)) == 0, rx_match))
+    matches = unique(getfield.(getindex.(collect.(rx_match), 1), :match))
+    for m in matches
+        match_data[m] = traj[m]
+    end
 
-## Returns
-- Channel from which trajectories can be taken.
-"""
-function read_h5!(datafile, data_keys, meta, is_jld)
-    feature_names = meta["feature_names"]
-    dims = meta["dims"]
-    trajectory_length = meta["trajectory_length"]
+    return match_data
+end
 
-    global l = ReentrantLock()
-
-    function get_traj(ch)
-        for k in data_keys
-            traj_dict = Dict{String, Any}()
-            for fn in feature_names
-                dim = haskey(meta["features"][fn], "dim") ? meta["features"][fn]["dim"] : 1
-                if meta["features"][fn]["type"] == "static"
-                    tl = 1
-                elseif meta["features"][fn]["type"] == "dynamic"
-                    tl = trajectory_length
-                else
-                    throw(ArgumentError("feature type must be static or dynamic"))
-                end
-                traj_dict[fn] = zeros(
-                    getfield(Base, Symbol(uppercasefirst(meta["features"][fn]["dtype"]))),
-                    dim, prod(dims), tl)
-                if haskey(meta["features"][fn], "has_ev") && meta["features"][fn]["has_ev"]
-                    traj_dict[fn * ".ev"] = zeros(eltype(traj_dict[fn]), 2, prod(dims), tl)
-                end
-
-                if haskey(meta["features"][fn], "split") && meta["features"][fn]["split"]
-                    rx = Regex(replace(
-                        replace(replace(meta["features"][fn]["key"], "[" => "\\["),
-                            "]" => "\\]"),
-                        "%d" => "\\d+") * "\\[\\d+\\]")
-                else
-                    rx = Regex(replace(
-                        replace(replace(meta["features"][fn]["key"], "[" => "\\["),
-                            "]" => "\\]"),
-                        "%d" => "\\d+"))
-                end
-
-                match_data = Dict()
-                lock(l) do
-                    if is_jld
-                        file = jldopen(datafile, "r")
-                        traj = file[k]
-                        rx_match = eachmatch.(rx, keys(traj))
-                        deleteat!(rx_match, findall(isnothing, rx_match))
-                        matches = unique(getfield.(rx_match, :match))
-                        for m in matches
-                            match_data[m] = traj[m]
-                            if haskey(meta["features"][fn], "has_ev") &&
-                               meta["features"][fn]["has_ev"]
-                                match_data[m * ".ev"] = traj[m * ".ev"]
-                            end
-                        end
-                    else
-                        file = h5open(datafile, "r")
-                        traj = open_group(file, k)
-                        rx_match = match.(rx, keys(traj))
-                        deleteat!(rx_match, findall(isnothing, rx_match))
-                        matches = unique(getfield.(rx_match, :match))
-                        for m in matches
-                            match_data[m] = Base.read(traj, m)
-                            if haskey(meta["features"][fn], "has_ev") &&
-                               meta["features"][fn]["has_ev"]
-                                match_data[m * ".ev"] = Base.read(traj, m * ".ev")
-                            end
-                        end
-                    end
-                    close(file)
-                end
-
-                for (m, data) in match_data
-                    if !occursin("]", m[1:(end - 1)])
-                        idx = Colon()
-                        if haskey(meta["features"][fn], "split") &&
-                           meta["features"][fn]["split"]
-                            coord = Base.parse.(Int, split(split(m, r"(\[|\])")[2], ","))
-                        else
-                            coord = Colon()
-                        end
-
-                        fn_k = occursin(".ev", m) ? "$fn.ev" : fn
-
-                        if meta["features"][fn]["type"] == "dynamic"
-                            if ndims(data) == 2
-                                traj_dict[fn_k][coord, :, :] = data[
-                                    coord, 1:trajectory_length]
-                            else
-                                traj_dict[fn_k][coord, :, :] = data[1:trajectory_length]
-                            end
-                        else
-                            traj_dict[fn_k][coord, :, :] .= data
-                        end
-
-                    else
-                        idx = Base.parse.(Int, split(split(m, r"(\[|\])")[2], ","))
-                        if haskey(meta["features"][fn], "split") &&
-                           meta["features"][fn]["split"]
-                            coord = Base.parse.(Int, split(split(m, r"(\[|\])")[4], ","))
-                        else
-                            coord = Colon()
-                        end
-
-                        fn_k = occursin(".ev", m) ? "$fn.ev" : fn
-
-                        if meta["features"][fn]["type"] == "dynamic"
-                            if ndims(data) == 2
-                                traj_dict[fn_k][coord, dims_to_li(dims, idx), :] = data[
-                                    coord, 1:trajectory_length]
-                            else
-                                traj_dict[fn_k][coord, dims_to_li(dims, idx), :] = data[
-                                    1:trajectory_length]
-                            end
-                        else
-                            traj_dict[fn_k][coord, dims_to_li(dims, idx), :] .= data
-                        end
-                    end
-                end
+function set_traj_data!(traj_dict::Dict{String, Any}, match_data, ds::Dataset, fn::String)
+    for (m, data) in match_data
+        if !occursin("]", m[1:(end - 1)])
+            idx = Colon()
+            if haskey(ds.meta["features"][fn], "split") &&
+               ds.meta["features"][fn]["split"]
+                coord = Base.parse.(Int, split(split(m, r"(\[|\])")[2], ","))
+            else
+                coord = Colon()
             end
 
-            lock(l) do
-                if is_jld
-                    file = jldopen(datafile, "r")
-                    traj_dict["dt"] = Float32.(file[k][meta["dt"]])
+            fn_k = occursin(".ev", m) ? "$fn.ev" : fn
+
+            if ds.meta["features"][fn]["type"] == "dynamic"
+                if ndims(data) == 2
+                    traj_dict[fn_k][coord, :, :] = data[
+                        coord, 1:traj_dict["trajectory_length"]]
                 else
-                    file = h5open(datafile, "r")
-                    traj_dict["dt"] = Float32.(Base.read(file[k], meta["dt"]))
+                    traj_dict[fn_k][coord, :, :] = data[1:traj_dict["trajectory_length"]]
                 end
-                close(file)
+            else
+                traj_dict[fn_k][coord, :, :] .= data
             end
 
-            if haskey(meta, "custom_edges")
-                lock(l)
-                if is_jld
-                    throw(ArgumentError("Custom edge definition is not supported for JLD2 files."))
-                else
-                    file = h5open(datafile, "r")
-
-                    edges = read_edges(file[k],
-                        meta["custom_edges"],
-                        traj_dict["node_type"],
-                        haskey(meta, "no_edges_node_types") ? meta["no_edges_node_types"] :
-                        [],
-                        haskey(meta, "exclude_node_indices") ?
-                        meta["exclude_node_indices"] : [])
-                    close(file)
-                end
-                unlock(l)
-            elseif haskey(meta, "dims") # this condition is basically useless, because if there would be no "dims", it would have failed earlier
-                edges = create_edges(dims, traj_dict["node_type"],
-                    haskey(meta, "no_edges_node_types") ? meta["no_edges_node_types"] : [])
+        else
+            idx = Base.parse.(Int, split(split(m, r"(\[|\])")[2], ","))
+            if haskey(ds.meta["features"][fn], "split") &&
+               ds.meta["features"][fn]["split"]
+                coord = Base.parse.(Int, split(split(m, r"(\[|\])")[4], ","))
+            else
+                coord = Colon()
             end
-            traj_dict["edges"] = hcat(sort(edges)...)
 
-            put!(ch, traj_dict)
+            fn_k = occursin(".ev", m) ? "$fn.ev" : fn
+
+            if typeof(idx) <: AbstractArray
+                if length(idx) > 1
+                    idx_node = dims_to_li(traj_dict["dims"], idx)
+                else
+                    idx_node = idx
+                end
+            else
+                idx_node = idx
+            end
+            if ds.meta["features"][fn]["type"] == "dynamic"
+                if ndims(data) == 2
+                    traj_dict[fn_k][coord, idx_node, :] = data[
+                        coord, 1:traj_dict["trajectory_length"]]
+                else
+                    traj_dict[fn_k][coord, idx_node, :] = data[
+                        1:traj_dict["trajectory_length"]]
+                end
+            else
+                traj_dict[fn_k][coord, idx_node, :] .= data
+            end
         end
     end
+end
 
-    return Channel{Dict}(get_traj, 100; spawn = true)
+function set_edges!(traj_dict::Dict{String, Any}, ds::Dataset, traj::Dict{String, Any})
+    if haskey(ds.meta, "edges")
+        if haskey(ds.meta["edges"], "type")
+            edge_type = ds.meta["edges"]["type"]
+            if edge_type == "cells"
+                if !haskey(ds.meta["edges"], "key")
+                    throw(ArgumentError("The metadata \"type\" for metadata \"edges\" was defined as \"cells\", but no metadata \"key\" for the datafile was given."))
+                end
+                edge_key = ds.meta["edges"]["key"]
+                if !haskey(traj, edge_key)
+                    throw(ArgumentError("The metadata \"key\" for metadata \"edges\", defined as \"$edge_key\", was not found in the datafile."))
+                end
+                traj_dict["cells"] = traj[edge_key]
+
+            elseif edge_type == "dims"
+                traj_dict["edges"] = create_edges(
+                    traj_dict["dims"], traj_dict["node_type"],
+                    get(ds.meta, "no_edges_node_types", []))
+            elseif edge_type == "custom"
+                if !haskey(ds.meta["edges"], "key")
+                    throw(ArgumentError("The metadata \"type\" for metadata \"edges\" was defined as \"custom\", but no metadata \"key\" for the datafile was given."))
+                end
+                edge_key = ds.meta["edges"]["key"]
+                if !haskey(traj, edge_key)
+                    throw(ArgumentError("The metadata \"key\" for metadata \"edges\", defined as \"$edge_key\", was not found in the datafile."))
+                end
+                edges = traj[edge_key]
+
+                traj_dict["edges"] = parse_custom_edges(
+                    edges, traj_dict["node_type"],
+                    get(ds.meta, "no_edges_node_types", []),
+                    get(ds.meta, "exclude_node_indices", []))
+            else
+                throw(ArgumentError("The metadata \"type\" of metadata \"edges\" is invalid. Possible values are: [\"cells\" for cell-type edge structures, \"dims\" for fixed edges along the dimensions, \"custom\" for custom edges]"))
+            end
+        else
+            throw(ArgumentError("The metadata \"edges\" does not specify an edge type with the metadata \"type\"."))
+        end
+    else
+        throw(ArgumentError("The metadata \"edges\" was not provided."))
+    end
 end
 
 """
-    create_edges(dims, node_type)
+    create_edges(dims, node_type, excluded_node_types)
 
-Creates a mesh with the given dimensions
+Creates a two-dimensional array with the first dimension as the two connected nodes and the second dimensions as the number of edges.
+Depending on the length of the given dimensions the edges are created differently:
+
+## 1D
+
+Nodes are connected via node IDs in ascending order, i.e. for four nodes with indices `[1, 2, 3, 4]`:
+
+```
+2×3 Matrix{Int64}:
+ 1  2  3
+ 2  3  4
+
+1 --- 2 --- 3 --- 4
+ ```
+
+## 2D
+
+2D is not supported yet.
+
+## 3D
+
+Nodes are connected along the dimensions based on the [LinearIndex](@ref) of the dimensional index, i.e.:
+
+```
+dims = [2, 2, 2]
+3-element Vector{Int64}:
+ 2
+ 2
+ 2
+
+li = LinearIndices(Tuple(dims))
+2×2×2 LinearIndices{3, Tuple{Base.OneTo{Int64}, Base.OneTo{Int64}, Base.OneTo{Int64}}}:
+[:, :, 1] =
+ 1  3
+ 2  4
+
+[:, :, 2] =
+ 5  7
+ 6  8
+
+  7 -------- 8
+ /|         /|
+3 -------- 4 |
+| |        | |
+| 5 - - - -| 6
+|/         |/
+1 -------- 2
+```
+
 
 ## Arguments
 - `dims`: Array with the dimensions of the mesh.
-- `node_type`: Array of node types from the data file.
+- `node_type`: Array of node types from the datafile.
 - `excluded_node_types`: Vector of node types that should not be connected with edges.
 
 ## Returns
-- Vector of connected node pair indices (as vectors).
+- Two-dimensional array of edges as pairs of node indices.
 """
-function create_edges(dims, node_type, no_edges_node_types)
+function create_edges(dims, node_type, excluded_node_types)
     li = LinearIndices(Tuple(dims))
     edges = Vector{Vector{Int32}}()
 
-    #################################################
-    # 1D-Meshes are connected in order by their id  #
-    #                                               #
-    # 2D-Meshes are not supported yet               #
-    #                                               #
-    # 3D-Meshes are connected in order by their id, #
-    # starting the count from z then y and then x   #
-    #################################################
     if length(dims) == 1
         for i in 1:(dims[1] - 1)
-            push!(edges, [i, i + 1])
+            if node_type[1, i, 1] in excluded_node_types
+                push!(edges, Int32[i, i])
+            elseif node_type[1, i + 1, 1] ∉ excluded_node_types
+                push!(edges, Int32[i, i + 1])
+            end
+        end
+        if dims[1] > 0 && node_type[1, dims[1], 1] in excluded_node_types
+            push!(edges, Int32[dims[1], dims[1]])
         end
     elseif length(dims) == 2
         throw(ArgumentError("2D-Meshes are not supported yet"))
@@ -388,7 +501,7 @@ function create_edges(dims, node_type, no_edges_node_types)
         function add_edge!(edges, x, y, z, cond, shift)
             if cond
                 if node_type[1, li[x + shift[1], y + shift[2], z + shift[3]], 1] ∉
-                   no_edges_node_types
+                   excluded_node_types
                     push!(
                         edges, [li[x, y, z], li[x + shift[1], y + shift[2], z + shift[3]]])
                 end
@@ -398,7 +511,7 @@ function create_edges(dims, node_type, no_edges_node_types)
         for x in 1:dim_x
             for y in 1:dim_y
                 for z in 1:dim_z
-                    if node_type[1, li[x, y, z], 1] ∉ no_edges_node_types
+                    if node_type[1, li[x, y, z], 1] ∉ excluded_node_types
                         add_edge!(edges, x, y, z, x != dim_x, [1, 0, 0])
                         add_edge!(edges, x, y, z, y != dim_y, [0, 1, 0])
                         add_edge!(edges, x, y, z, z != dim_z, [0, 0, 1])
@@ -410,42 +523,46 @@ function create_edges(dims, node_type, no_edges_node_types)
                 end
             end
         end
+    else
+        throw(ArgumentError("Only 1D and 3D meshes are supported, got $(length(dims)) dimensions"))
     end
 
-    return edges
+    return hcat(sort(unique(edges))...)
 end
 
 """
-    read_edges(traj::Group, node_type, no_edges_node_types::Vector{Int}, exclude_node_indices::Vector{Int})
+    parse_custom_edges(edges, node_type, no_edges_node_types, exclude_node_indices)
 
-    Read edges from trajectory group.
+Parses the edges that were read from the datafile. The format is a vector of pairs of node indices that represent edges.
 
-    ## Arguments
+## Arguments
+- `edges`: Vector of pairs of node indices.
+- `node_type`: Array of node types from the datafile.
+- `no_edges_node_types`: Vector of node types that should not be connected with edges.
+- `exclude_node_indices`: Vector of node indices that should not be connected with edges.
 
-    - `traj`: HDF5 group containing this trajectory's data.
-    - `node_type`: Array of node types from the data file.
-    - `excluded_node_types`: Vector of node types that should not be connected with edges.
-    - `exclude_node_indices`: Vector of node indices that should not be connected with edges.
-
-    ## Returns
-
-    - Vector of connected node pair indices (as vectors).
+## Returns
+- Two-dimensional array of edges as pairs of node indices.
 """
-function read_edges(
-        traj::Group, edge_key, node_type, no_edges_node_types, exclude_node_indices)
-    if !haskey(traj, edge_key)
-        throw(KeyError(
-            "Key '$(edge_key)' not found in trajectory group '$(HDF5.name(traj))'"))
+function parse_custom_edges(edges, node_type, no_edges_node_types, exclude_node_indices)
+    node_types = ndims(node_type) == 1 ? node_type : vec(node_type[1, :, 1])
+    exclude_indices = Int32.(findall(x -> x ∈ no_edges_node_types, node_types))
+    exclude_indices = Set(vcat(exclude_indices, Int32.(exclude_node_indices)))
+    edge_pairs = if size(edges, 1) == 2
+        eachcol(edges)
+    elseif size(edges, 2) == 2
+        eachrow(edges)
+    else
+        throw(DimensionMismatch("custom edges must be a 2×N or N×2 array"))
     end
-    edges = read_dataset(traj, edge_key)
-    exclude_indices = findall(x -> x ∈ no_edges_node_types, node_type)
-    exclude_indices = vcat(exclude_indices, exclude_node_indices)
-    filter!(x -> x[1] ∉ exclude_indices && x[2] ∉ exclude_indices, edges)
+    filtered_edges = filter(
+        x -> Int32(x[1]) ∉ exclude_indices && Int32(x[2]) ∉ exclude_indices, edge_pairs)
     edge_vec = Vector{Vector{Int32}}()
-    for edge in edges
-        push!(edge_vec, [edge[1], edge[2]])
+    for edge in filtered_edges
+        push!(edge_vec, Int32[edge[1], edge[2]])
     end
-    return edge_vec
+
+    return hcat(sort(unique(edge_vec))...)
 end
 
 """
@@ -461,7 +578,7 @@ Shifts the datapoints beginning from second index back in order to use them as g
 function add_targets!(data, fields, device)
     new_data = deepcopy(data)
     for (key, value) in data
-        if startswith(key, "target|")
+        if startswith(key, "target|") || key == "dt"
             continue
         end
         if ndims(value) > 2 && size(value)[end] > 1
@@ -495,136 +612,36 @@ Adds noise to the given features and shuffles the datapoints if a derivative bas
 """
 function preprocess!(data, noise_fields, noise_stddevs, types_noisy, ts, device)
     if length(noise_stddevs) != 1 && length(noise_stddevs) != length(noise_fields)
-        throw(DimensionMismatch("""dimension of noise must be 1 or match noise fields:
-                                noise has dim $(size(noise_stddevs)),
-                                noise fields has dim $(size(noise_fields))"""))
+        throw(DimensionMismatch("dimension of noise must be 1 or match noise fields: noise has dim $(size(noise_stddevs)), noise fields has dim $(size(noise_fields))"))
     end
     for (i, nf) in enumerate(noise_fields)
         d = Normal(0.0f0, length(noise_stddevs) > 1 ? noise_stddevs[i] : noise_stddevs[1])
-        noise = rand(d, size(data[nf])) |> device
+        noise = rand(d, size(data[nf]))
 
         mask = findall(x -> x ∉ types_noisy, data["node_type"][1, :, 1])
-        noise[:, mask, :] .= 0
-        data[nf] += noise
+        noise[:, mask, :] .= 0.0f0
+        data[nf] += device(noise)
     end
 
-    seed = make_seed(1234)
-    rng = MersenneTwister(seed)
+    rng = MersenneTwister(1234)
 
     for key in keys(data)
         if key == "edges" || length(data[key]) == 1 || size(data[key])[end] == 1
             continue
         end
-        if typeof(ts) <: DerivativeStrategy && ts.random
-            data[key] = data[key][repeat([:], ndims(data[key]) - 1)...,
-                shuffle(rng,
-                    ts.window_size == 0 ? collect(1:end) : collect(1:(ts.window_size)))]
+        if ts.random
+            if key != "dt"
+                data[key] = data[key][repeat([:], ndims(data[key]) - 1)...,
+                    shuffle(rng,
+                        ts.window_size == 0 ? collect(1:end) : collect(1:(ts.window_size)))]
+            end
         end
-        seed!(rng, seed)
+        seed!(rng, 1234)
     end
 end
 
 """
-    take_trajectory!(dataset, is_training)
-
-Reads a trajectory from the dataset or from the cached Dictionary if already read.
-
-## Arguments
-- `dataset`: Dataset containing the data and metadata.
-- `is_training`: Whether the data should be loaded for training or for evaluation.
-
-## Returns
-- Dictionary with data from the dataset containing one trajectory.
-"""
-function take_trajectory!(dataset::Dataset, is_training::Bool)
-    if typeof(dataset.ch) == Channel{Example}
-        if is_training
-            if !isready(dataset.ch)
-                dataset.ch = read(dataset.file; channel_size = dataset.cs)
-                dataset.current = 0
-            end
-            dataset.current += 1
-            return take!(dataset.ch)
-        else
-            if !isready(dataset.ch_valid)
-                dataset.ch_valid = read(dataset.file_valid; channel_size = dataset.cs)
-                dataset.current_valid = 0
-            end
-            dataset.current_valid += 1
-            return take!(dataset.ch_valid)
-        end
-    elseif typeof(dataset.ch) <: Channel{Dict}
-        if is_training
-            if length(keys(dataset.data)) < dataset.meta["n_trajectories"]
-                traj = take!(dataset.ch)
-                dataset.current += 1
-                dataset.data[dataset.current] = deepcopy(traj)
-                return traj
-            else
-                if dataset.current == length(keys(dataset.data))
-                    dataset.current = 0
-                end
-                dataset.current += 1
-                return deepcopy(dataset.data[dataset.current])
-            end
-        else
-            if length(keys(dataset.data_valid)) < dataset.meta["n_trajectories_valid"]
-                traj = take!(dataset.ch_valid)
-                dataset.current_valid += 1
-                dataset.data_valid[dataset.current_valid] = deepcopy(traj)
-                return traj
-            else
-                if dataset.current_valid == length(keys(dataset.data_valid))
-                    dataset.current_valid = 0
-                end
-                dataset.current_valid += 1
-                return deepcopy(dataset.data_valid[dataset.current_valid])
-            end
-        end
-    else
-        throw(ArgumentError("""Wrong type of dataset: $(typeof(dataset.ch));
-                            must be Channel{TFRecord.Example} or Channel{Dict}"""))
-    end
-end
-
-"""
-    next_trajectory!(dataset, device; types_noisy, noise_stddevs = nothing, ts = nothing, is_training = true)
-
-Returns the next trajectory of the dataset that is preprocessed for the given task.
-
-## Arguments
-- `dataset`: Dataset containing the data and metadata.
-- `device`: Device where the data should be loaded (see [Lux GPU Management](https://lux.csail.mit.edu/dev/manual/gpu_management#gpu-management)).
-
-## Keyword Arguments
-- `types_noisy`: Node types to which noise is added.
-- `noise_stddevs`: Array of standard deviations of the noise, where the length is either one if broadcasted or equal to the length of features.
-- `ts`: Training strategy that is used.
-- `is_training`: Whether the data should be loaded for training or for evaluation.
-
-## Returns
-- Preprocessed trajectory.
-"""
-function next_trajectory!(dataset::Dataset, device::Function; types_noisy,
-        noise_stddevs = nothing, ts = nothing, is_training = true)
-    if typeof(dataset.ch) == Channel{Example}
-        data = parse_data(take_trajectory!(dataset, is_training), dataset.meta)
-        data["dt"] = [i * Float32(dataset.meta["dt"])
-                      for i in 1:dataset.meta["trajectory_length"]]
-        return prepare_trajectory!(
-            data, dataset.meta, device; types_noisy, noise_stddevs, ts)
-    elseif typeof(dataset.ch) <: Channel{Dict}
-        data = take_trajectory!(dataset, is_training)
-        meta = copy(dataset.meta)
-        meta["dt"] = data["dt"]
-        return prepare_trajectory!(data, meta, device; types_noisy, noise_stddevs, ts)
-    else
-        throw(ArgumentError("The type of data is not supported: $(typeof(dataset.ch))"))
-    end
-end
-
-"""
-    prepare_trajectory!(data, meta, device; types_noisy, noise_stddevs, ts)
+    prepare_trajectory!(data, meta, device)
 
 Transfers the data to the given device and configures the data if a derivative based strategy is used.
 
@@ -633,19 +650,19 @@ Transfers the data to the given device and configures the data if a derivative b
 - `meta`: Metadata of the dataset.
 - `device`: Device where the data should be loaded (see [Lux GPU Management](https://lux.csail.mit.edu/dev/manual/gpu_management#gpu-management)).
 
-## Keyword Arguments
-- `types_noisy`: Node types to which noise is added.
-- `noise_stddevs`: Array of standard deviations of the noise, where the length is either one if broadcasted or equal to the length of features.
-- `ts`: Training strategy that is used.
+The training strategy, noisy node types, and noise standard deviations are read from
+`meta`.
 
 ## Returns
-- Transfered data.
+- Transferred data.
 - Metadata of the dataset.
 """
-function prepare_trajectory!(data, meta, device::Function; types_noisy, noise_stddevs, ts)
-    if !isnothing(ts) && (typeof(ts) <: DerivativeStrategy)
+function prepare_trajectory!(data, meta, device::Function)
+    if !isnothing(meta["training_strategy"]) &&
+       (typeof(meta["training_strategy"]) <: DerivativeStrategy)
         add_targets!(data, meta["target_features"], device)
-        preprocess!(data, meta["target_features"], noise_stddevs, types_noisy, ts, device)
+        preprocess!(data, meta["target_features"], meta["noise_stddevs"],
+            meta["types_noisy"], meta["training_strategy"], device)
         for field in meta["feature_names"]
             if field == "mesh_pos" || field == "node_type" || field == "cells" ||
                field in meta["target_features"]

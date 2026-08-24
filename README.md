@@ -5,6 +5,7 @@
 [![Docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://una-auxme.github.io/MeshGraphNets.jl/dev)
 [![Aqua QA](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
 [![SciML Code Style](https://img.shields.io/static/v1?label=code%20style&message=SciML&color=9558b2&labelColor=389826)](https://github.com/SciML/SciMLStyle)
+[![Coverage](https://codecov.io/gh/una-auxme/MeshGraphNets.jl/branch/main/graph/badge.svg)](https://app.codecov.io/gh/una-auxme/MeshGraphNets.jl)
 
 [*MeshGraphNets.jl*](https://github.com/una-auxme/MeshGraphNets.jl) is a software package for the Julia programming language that provides an implementation of the [MeshGraphNets](https://arxiv.org/abs/2010.03409) framework by [Google DeepMind](https://deepmind.google/) for simulating mesh-based physical systems via graph neural networks:
 
@@ -33,3 +34,14 @@ Examples from the original paper are implemented in the [examples folder](https:
 ## Citation
 
 Coming soon!
+
+## License
+
+This repository uses a mixed-license structure. The Julia adaptations of
+Google DeepMind's MeshGraphNets implementation and the CylinderFlow example
+are licensed under Apache-2.0; project-specific code, documentation, tests,
+configuration, and artwork are licensed under MIT. See the
+[license documentation](https://una-auxme.github.io/MeshGraphNets.jl/dev/license/)
+for the complete file-level boundary and the repository
+[`NOTICE`](https://github.com/una-auxme/MeshGraphNets.jl/blob/main/NOTICE) for
+upstream attribution and modification information.

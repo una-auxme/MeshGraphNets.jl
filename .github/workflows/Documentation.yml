@@ -28,7 +28,7 @@ jobs:
       - name: "Set up Julia"
         uses: julia-actions/setup-julia@v2
         with:
-          version: '1.10'
+          version: '1.11'
           arch: x64
 
       - name: "Copy readme to doc"
@@ -41,5 +41,4 @@ jobs:
       - name: "Build and deploy"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
         run: julia --project=docs/ docs/make.jl

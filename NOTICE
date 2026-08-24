@@ -1,0 +1,46 @@
+MeshGraphNets.jl
+Copyright (c) 2023 Julian Trommer
+Copyright (c) 2024 Leonard Heber
+Copyright (c) 2024 Luca Kahlenberg
+
+This product includes software adapted from the MeshGraphNets implementation
+in Google DeepMind's deepmind-research repository:
+
+  https://github.com/google-deepmind/deepmind-research/tree/master/meshgraphnets
+
+Copyright 2020 DeepMind Technologies Limited. All Rights Reserved.
+Licensed under the Apache License, Version 2.0.
+
+The adapted files were translated to Julia and substantially modified for
+MeshGraphNets.jl beginning in 2023. The file-level notices identify the files
+that contain this adapted material.
+
+Apache-2.0 files
+----------------
+
+The following files are adaptations of, or are derived from, the
+`meshgraphnets` directory in Google DeepMind's deepmind-research repository:
+
+- src/MeshGraphNets.jl
+- src/dataset.jl
+- src/graph.jl
+- src/solve.jl
+- examples/cylinder_flow/convert_data.jl
+- examples/cylinder_flow/cylinder_flow.jl
+- examples/cylinder_flow/meta.json
+
+These files are licensed under the Apache License, Version 2.0. See
+LICENSE-APACHE. They retain the applicable DeepMind copyright and attribution
+notices and state that they have been modified.
+
+MIT files
+---------
+
+All other files in this repository, unless a file states otherwise, are
+licensed under the MIT License. See LICENSE.
+
+This includes the project-specific training strategies and utilities,
+documentation, tests, package and CI configuration, and artwork.
+
+MeshGraphNets.jl is an independent project and is not endorsed by or
+affiliated with Google DeepMind.
