@@ -1,7 +1,7 @@
 name = "MeshGraphNets"
 uuid = "f7b4726d-4195-44ab-b39c-37bbdadae004"
 authors = ["Julian Trommer <julian.trommer@uni-a.de>"]
-version = "0.4.2"
+version = "0.5.0"
 
 [deps]
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
