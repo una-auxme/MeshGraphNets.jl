@@ -211,8 +211,12 @@ function train_loss(strategy::SolverStrategy, t::Tuple)
         sensealg = strategy.sense, callback = callback_solve, strategy.solargs...)
 
     pred = typeof(gt) <: CuArray ? CuArray(sol) : Array(sol)
-    error = mean(abs2, gt[:, :, axes(pred, 3)] - pred)
-    return error
+    error = abs2.(gt[:, :, axes(pred, 3)] - pred)
+
+    mask = reshape(val_mask, size(val_mask)..., 1)
+    denominator = size(error, 3) * sum(val_mask)
+
+    return sum(error .* mask) / denominator
 end
 
 function validation_step(strategy::SolverStrategy, t::Tuple)
